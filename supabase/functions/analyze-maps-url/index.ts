@@ -28,7 +28,7 @@ async function analyzeMapsImageWithLLM(base64Image: string, llmApiKey: string) {
 }`;
 
     const payload = {
-        model: "Qwen/Qwen3.5-397B-A17B:novita",
+        model: "meta-llama/Llama-3.2-11B-Vision-Instruct",
         messages: [
             {
                 role: "user",
@@ -188,9 +188,15 @@ serve(async (req) => {
 
         const imageBuffer = await imageRes.arrayBuffer();
 
-        // Convert array buffer to base64
-        // Deno specific way
-        const base64String = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
+        // Convert array buffer to base64 safely
+        // Deno doesn't support Buffer globally easily in edge functions, so we chunk it or use a proper btoa approach
+        const uint8Array = new Uint8Array(imageBuffer);
+        let binaryString = '';
+        for (let i = 0; i < uint8Array.byteLength; i += 1024) {
+            const chunk = uint8Array.subarray(i, i + 1024);
+            binaryString += String.fromCharCode.apply(null, chunk as any);
+        }
+        const base64String = btoa(binaryString);
 
 
         const llmApiKey = Deno.env.get('HF_TOKEN') ?? 'mock_key';
