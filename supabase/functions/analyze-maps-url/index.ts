@@ -102,12 +102,101 @@ serve(async (req) => {
             global: { headers: { Authorization: req.headers.get('Authorization')! } }
         });
 
-        // --- 1. GOOGLE MAPS SCRAPING LOGIC ---
-        // Implementation out of scope for mockup, but this connects to a headless chromium or Maps API
-        const mockBase64 = "base64_string_here_from_maps";
+        // --- 1. GOOGLE PLACES API LOGIC ---
+        const googleApiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
+        if (!googleApiKey) {
+            throw new Error("GOOGLE_PLACES_API_KEY is not set in environment.");
+        }
+
+        // Extremely basic text search to find Place ID from URL or query
+        // We'll treat the mapsUrl as a query if it's text, or try to extract from a real URL
+        let searchQuery = mapsUrl;
+
+        let placeId = null;
+        let placeName = "Unknown Store";
+
+        console.log(`Searching Google Places for: ${searchQuery}`);
+
+        // Find Place Request
+        const findPlaceUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(searchQuery)}&inputtype=textquery&fields=place_id,name&key=${googleApiKey}`;
+        const findPlaceRes = await fetch(findPlaceUrl);
+        const findPlaceData = await findPlaceRes.json();
+
+        if (findPlaceData.status === 'OK' && findPlaceData.candidates && findPlaceData.candidates.length > 0) {
+            placeId = findPlaceData.candidates[0].place_id;
+            placeName = findPlaceData.candidates[0].name;
+            console.log(`Found Place ID: ${placeId} (${placeName})`);
+        } else {
+            throw new Error(`Could not find a Google Place matching the input. Google API Status: ${findPlaceData.status}`);
+        }
+
+        // Place Details Request to get photos
+        const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,photos,types&key=${googleApiKey}`;
+        const detailsRes = await fetch(detailsUrl);
+        const detailsData = await detailsRes.json();
+
+        if (detailsData.status !== 'OK') {
+            throw new Error(`Failed to fetch place details. Google API Status: ${detailsData.status}`);
+        }
+
+        const types = detailsData.result.types || [];
+        // Basic pre-validation based on Google Types
+        const isLikelyRetail = types.some((t: string) => ['grocery_or_supermarket', 'convenience_store', 'store', 'supermarket', 'department_store'].includes(t));
+        const isInvalidLocation = types.some((t: string) => ['restaurant', 'cafe', 'bar', 'lodging'].includes(t)) && !isLikelyRetail;
+
+        if (isInvalidLocation) {
+            return new Response(JSON.stringify({
+                success: true,
+                results: {
+                    is_valid_grocery_store: false,
+                    reasoning: `Google Places classifies this as ${types.join(', ')}, which indicates it is not a grocery or retail store.`,
+                    store_type: 'unknown',
+                    estimated_store_size: 'Unknown',
+                    visible_brands: [],
+                    dominant_brand: 'Unknown',
+                    ad_materials_detected: [],
+                    category_detected: 'Unknown',
+                    shelf_density_estimate: 'Unknown',
+                    out_of_stock_signals: 'Unknown',
+                    competitive_brand_presence: 'Unknown',
+                    image_name: 'No Image Processed'
+                }
+            }), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+                status: 200,
+            });
+        }
+
+        const photos = detailsData.result.photos;
+        if (!photos || photos.length === 0) {
+            throw new Error("No photos found for this Google Place.");
+        }
+
+        // Take the first photo reference (usually the main one)
+        const photoRef = photos[0].photo_reference;
+
+        // Fetch Photo Base64
+        console.log("Fetching photo bytes from Google Places...");
+        // Get max width 800 for reasonable LLM payload size
+        const photoUrl = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photo_reference=${photoRef}&key=${googleApiKey}`;
+
+        // Fetch the raw image bytes
+        const imageRes = await fetch(photoUrl);
+        if (!imageRes.ok) {
+            throw new Error(`Failed to download image from Google Places API. Status: ${imageRes.status}`);
+        }
+
+        const imageBuffer = await imageRes.arrayBuffer();
+
+        // Convert array buffer to base64
+        // Deno specific way
+        const base64String = btoa(String.fromCharCode(...new Uint8Array(imageBuffer)));
+
 
         const llmApiKey = Deno.env.get('HF_TOKEN') ?? 'mock_key';
-        const analysis = await analyzeMapsImageWithLLM(mockBase64, llmApiKey);
+        console.log(`Sending real store photo to LLM API...`);
+        const analysis = await analyzeMapsImageWithLLM(base64String, llmApiKey);
+        analysis.image_name = `${placeName.replace(/\s+/g, '_')}_maps_photo.jpg`;
 
         // --- 2. INSERT INTO DB ---
         if (storeId) {

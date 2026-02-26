@@ -90,75 +90,51 @@ async function fetchQwenAnalysis(imageUrl, fileName) {
 
 export async function analyzeImage(gmapsUrl) {
     try {
-        const isInvalidLocation = gmapsUrl.toLowerCase().includes('restaurant') || gmapsUrl.toLowerCase().includes('cafe');
-        if (isInvalidLocation) {
-            return {
-                is_valid_grocery_store: false,
-                reasoning: "Analysis of the Google Maps listing indicates this is a restaurant or cafe, not a grocery or FMCG retail store."
-            };
+        console.log(`Calling Supabase Edge Function to analyze: ${gmapsUrl}`);
+        const { data, error } = await supabase.functions.invoke('analyze-maps-url', {
+            body: { mapsUrl: gmapsUrl, storeId: 'frontend_direct_run_no_store_id' }
+        });
+
+        if (error) {
+            console.error("Supabase Edge Function returned an error:", error);
+            throw error;
         }
 
-        // Live HuggingFace Call using a safe proxy image from maps URL logic
-        const analysis = await fetchQwenAnalysis(MOCK_STORE_IMG_URL, "maps_extraction_img.jpg");
-        return analysis;
+        if (data && data.success && data.results) {
+            return data.results;
+        } else {
+            throw new Error(data?.error || "Unknown error from server.");
+        }
     } catch (e) {
         console.error("Single image analysis failed:", e);
         return {
             is_valid_grocery_store: false,
-            reasoning: `AI Processing Failed: ${e.message} (If VITE_HF_TOKEN is missing, please restart your Vite dev server.)`
+            reasoning: `AI Processing Failed: ${e.message} (Please verify backend configuration.)`
         };
     }
 }
 
 export async function analyzeDriveFolder(folderUrl) {
     try {
-        const isInvalidSource = !folderUrl.includes('drive.google.com/drive/folders/');
-        if (isInvalidSource) {
+        console.log(`Calling Supabase Edge Function to analyze Drive folder.`);
+        const { data, error } = await supabase.functions.invoke('analyze-drive-folder', {
+            body: { driveUrl: folderUrl }
+        });
+
+        if (error) {
+            console.error("Supabase Edge Function returned an error:", error);
+            throw error;
+        }
+
+        if (data && data.success) {
             return {
-                is_valid_source: false,
-                reasoning: "Invalid Google Drive Folder URL."
+                is_valid_source: true,
+                total_images_processed: data.total_processed,
+                results: data.results
             };
+        } else {
+            throw new Error(data?.error || "Unknown error from server.");
         }
-
-        // Exact filenames you requested:
-        const mockImages = [
-            'ChIJ0-OqDdyd-DkRAq7PfOBVP7w_photo_6.jpg',
-            'ChIJ82vXi5id-DkRf481EcTsMQY_photo_4.jpg',
-            'ChIJfb_VmSGd-DkRUhU9Le_G-VA_photo_4.jpg',
-            'ChIJfxqBTgCd-DkRVEowY-XKJs_photo_1.jpg',
-            'ChIJPaBG9bqd-DkRFan-kzrXSjs_photo_1.jpg',
-            'ChIJRRhWkPmd-DkRBOzms1mmQJQ_photo_1.jpg',
-            'ChIJSQur4m-d-DkRj7Hymasly5Q_photo_1.jpg',
-            'ChIJSQur4m-d-DkRj7Hymasly5Q_photo_4.jpg'
-        ];
-
-        const results = [];
-        // Sequential Promise processing to completely dodge HF Rate Limits
-        for (const fileName of mockImages) {
-            console.log(`Pinging Qwen AI for ${fileName}...`);
-            try {
-                // Passing the mock store image URL because browser JS cannot securely download private Drive JPEGs
-                const analysis = await fetchQwenAnalysis(MOCK_STORE_IMG_URL, fileName);
-                results.push(analysis);
-            } catch (err) {
-                console.error(`Failed on image ${fileName}:`, err);
-                // Push a placeholder on failure to maintain 8 items
-                results.push({
-                    image_name: fileName,
-                    is_valid_grocery_store: false,
-                    reasoning: "AI Processing Failed: " + err.message
-                });
-            }
-
-            // 2 second cooldown for Qwen API rate limits
-            await new Promise(res => setTimeout(res, 2000));
-        }
-
-        return {
-            is_valid_source: true,
-            total_images_processed: results.length,
-            results
-        };
 
     } catch (e) {
         console.error("Bulk processing failed:", e);
