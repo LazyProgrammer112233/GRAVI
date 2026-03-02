@@ -18,17 +18,11 @@ function generateUUID(): string {
 }
 
 // ============================================================
-// HARD FMCG BRAND DATABASE — STRICT MATCH ONLY
+// DYNAMIC FMCG BRAND RECOGNITION (REPLACED HARD LIST)
 // ============================================================
-const FMCG_DATABASE: Record<string, string[]> = {
-    Snacks: ["Lay's", "Kurkure", "Haldiram's", "Bingo", "Balaji", "Uncle Chips"],
-    Beverages: ["Coca-Cola", "Pepsi", "Sprite", "Thums Up", "Fanta", "Tropicana"],
-    Dairy: ["Amul", "Mother Dairy", "Britannia", "Parag", "Kwality"],
-    Staples: ["Aashirvaad", "Fortune", "India Gate", "Tata Sampann", "Pillsbury"],
-    "Personal Care": ["Dove", "Lux", "Lifebuoy", "Colgate", "Patanjali", "Himalaya"],
-};
-
-const ALL_FMCG_BRANDS: string[] = Object.values(FMCG_DATABASE).flat();
+// Removed rigid FMCG_DATABASE.
+// The Vision LLM is now instructed to dynamically read labels from the images
+// and construct its own categorized list of brands (known or unknown).
 
 // ============================================================
 // ALLOWED INDIAN GROCERY STORE TAXONOMY (CLOSED SET)
@@ -103,11 +97,7 @@ async function runVisionAnalysis(
 ): Promise<any> {
     const API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-    const fmcgListText = Object.entries(FMCG_DATABASE)
-        .map(([cat, brands]) => `${cat}: ${brands.join(", ")}`)
-        .join("\n");
-
-    const systemPrompt = `You are GRAVI Core Validation Engine v2.0 — an elite FMCG Retail Intelligence AI.
+    const systemPrompt = `You are GRAVI Core Validation Engine v2.1 — an elite FMCG Retail Intelligence AI.
 You are analyzing ${base64Images.length} image(s) of the retail store: "${placeName}" (Google types: ${googleTypes.join(", ") || "unknown"}).
 
 HARD RULES — NEVER VIOLATE:
@@ -115,9 +105,11 @@ HARD RULES — NEVER VIOLATE:
 2. Do NOT guess if you cannot clearly see a label, logo, or sign.
 3. If uncertainty exceeds 20%, set store_type to "UNCLASSIFIED" and confidence_score to a value below 75.
 
-BRAND DETECTION:
-Only detect brands from this EXACT list. Discard anything not on this list:
-${fmcgListText}
+DYNAMIC BRAND DETECTION FROM SHELVES:
+Aggressively inspect every shelf, refrigerator, and rack pictured. Read the packaging labels, logos, and product names.
+You must fetch AND categorize ANY identifiable FMCG brand you see (e.g., local snacks, regional detergents, unknown drinks) — do NOT limit yourself to major international brands.
+Group them dynamically under logical categories like "Snacks", "Beverages", "Dairy", "Personal Care", "Staples", "Home Care", etc. 
+Do not return empty arrays for categories you invent. If you don't see any brands, leave the object empty {}.
 
 STORE TYPE:
 You MUST use exactly one label from this closed taxonomy (or "UNCLASSIFIED"):
@@ -134,11 +126,7 @@ Return ONLY valid JSON, no markdown:
   "store_type": "",
   "confidence_score": 0,
   "detected_brands": {
-    "Snacks": [],
-    "Beverages": [],
-    "Dairy": [],
-    "Staples": [],
-    "Personal Care": []
+    "CategoryName": ["Brand1", "Brand2"]
   },
   "shelf_density_score": 0,
   "review_common_themes": [],
@@ -299,23 +287,36 @@ serve(async (req: Request) => {
         const llmApiKey = Deno.env.get('GROQ_API_KEY') ?? '';
         if (!llmApiKey) throw new Error("GROQ_API_KEY not set.");
 
-        // ── PHASE 1 STEP 1: URL Resolution ──────────────────────────
+        // ── PHASE 1 STEP 1: URL Resolution & Coordinate Extraction ──────────────────────────
         let searchQuery = mapsUrl;
         let resolvedUrl = mapsUrl;
+        let coordsStr = ""; // e.g., "15.3949851,73.8163628"
+
         if (mapsUrl.startsWith('http')) {
             try {
                 const resolveRes = await fetch(mapsUrl, { method: 'HEAD', redirect: 'follow' });
                 resolvedUrl = resolveRes.url;
+
+                // Extract Name Search Query
                 const placeMatch = resolvedUrl.match(/\/place\/([^/@?]+)/);
                 if (placeMatch?.[1]) {
                     searchQuery = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
+                }
+
+                // Strictly Extract GPS Coordinates from /@lat,lng,z bounds in either Shortlink or Longlink
+                const coordsMatch = resolvedUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+                if (coordsMatch) {
+                    coordsStr = `${coordsMatch[1]},${coordsMatch[2]}`;
+                    console.log(`[${analysisSessionId}] Active GPS Coordinate Constraint Found: ${coordsStr}`);
                 }
             } catch { /* fall back to raw URL */ }
         }
         console.log(`[${analysisSessionId}] Resolved search query: ${searchQuery}`);
 
-        // ── PHASE 1 STEP 2: Find Place — must be exactly ONE result ─
-        const findPlaceUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(searchQuery)}&inputtype=textquery&fields=place_id,name&key=${googleApiKey}`;
+        // ── PHASE 1 STEP 2: Find Place — Strict Bound ───────────────────────
+        // Append location bias if coords were captured to aggressively bind the text search to that exact location
+        const locationBias = coordsStr ? `&locationbias=circle:50@${coordsStr}` : "";
+        const findPlaceUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(searchQuery)}&inputtype=textquery&fields=place_id,name${locationBias}&key=${googleApiKey}`;
         const fpRes = await fetch(findPlaceUrl);
         const fpData = await fpRes.json();
 
@@ -410,12 +411,15 @@ serve(async (req: Request) => {
             : 0;
         const storeTypeConfidence = confidenceScore >= 75 ? "HIGH" : "LOW";
 
-        // ── PHASE 3: Filter brands strictly to hard database ─────────
-        const detectedBrands: Record<string, string[]> = { Snacks: [], Beverages: [], Dairy: [], Staples: [], "Personal Care": [] };
-        const visionBrands: Record<string, string[]> = visionResult.detected_brands || {};
-        for (const [category, allowedList] of Object.entries(FMCG_DATABASE)) {
-            const fromVision: string[] = Array.isArray(visionBrands[category]) ? visionBrands[category] : [];
-            detectedBrands[category] = fromVision.filter(b => allowedList.includes(b));
+        // ── PHASE 3: Forward Dynamics Brands ─────────────────────────
+        // We now accept the Vision AI's dynamically categorized brands directly.
+        const detectedBrands: Record<string, string[]> = visionResult.detected_brands || {};
+
+        // Clean out empty categories
+        for (const key of Object.keys(detectedBrands)) {
+            if (!Array.isArray(detectedBrands[key]) || detectedBrands[key].length === 0) {
+                delete detectedBrands[key];
+            }
         }
         const detectedBrandsFlat = Object.values(detectedBrands).flat();
 
