@@ -1,0 +1,43 @@
+====================================================================
+GRAVI - General Retail Artificial Vision Intelligence
+Project Summary & Core Logic
+====================================================================
+
+[ OVERVIEW ]
+GRAVI is an intelligence platform designed to analyze retail stores (e.g., Kiranas, Supermarkets). It uses advanced Vision AI to look at storefront and interior shelf images to automatically extract store names, classify store types, and detect specific Fast-Moving Consumer Goods (FMCG) brands on the shelves.
+
+[ TECH STACK ]
+- Frontend: React (Vite) hosted on Vercel.
+- Backend: Supabase Edge Functions (Deno runtime).
+- Vision AI: Groq API using the 'meta-llama/llama-4-scout-17b-16e-instruct' Free Vision model.
+- Mapping Data: Google Places API.
+
+[ CORE LOGIC FLOW ]
+
+1. URL Input & Resolution
+   - The user pastes a Google Maps URL (shortlink or long) onto the React Dashboard.
+   - The frontend sends this URL to the Supabase Edge Function ('analyze-maps-url').
+   - The backend resolves any shortlink redirects to extract the actual location query.
+
+2. Google Places API Fetching
+   - The backend searches the Google Places API for the location query to get the 'place_id'.
+   - Instead of relying on Google's strict (and sometimes incorrect) store categorizations, it fetches an array of up to 4 photos from the Google listing. This ensures the AI sees the exterior storefront AND the interior product shelves.
+   - The photos are downloaded and converted into Base64 format.
+
+3. Deep Vision AI Scanning
+   - The array of 4 Base64 images is pushed simultaneously to the Groq Llama 4 Scout Vision API.
+   - The AI is instructed via a highly-strict, anti-hallucination prompt.
+   - EXTERIOR SCAN: It reads the main exterior signboard to extract the true 'store_name'.
+   - INTERIOR SCAN: It scans the interior shelves and fridges, aggressively hunting for packaged product shapes and logos to identify a minimum of 4-5 FMCG brands (like Coca-Cola, Lay's). It is strictly forbidden from mistaking the storefront name for a product brand.
+
+4. Dashboard Rendering
+   - The AI returns a rigidly formatted JSON payload containing the intelligence (store name, type, confidence percentage, visible brands array, etc.).
+   - The Supabase Edge function returns this secure JSON back to the Vercel frontend.
+   - The React UI dynamically renders this data on the Analysis Dashboard, formatting confidence scores parsing fallback layouts if needed.
+
+[ RECENT KEY IMPLEMENTATIONS ]
+- Migrated LLM completely off paid router models onto free open-source models (Groq Llama 4 Scout).
+- Built Vercel production deployment configurations (vercel.json) for smooth SPA routing.
+- Stripped away restrictive Google Maps auto-rejections to let the AI be the ultimate judge of valid grocery stores.
+- Upgraded the AI prompt from a single-photo exterior scan to an aggressive multi-photo interior shelf scanning logic.
+- Implemented frontend UI fixes (smooth GPU-accelerated cursor blobs, contrasting text colors, and decimal-to-percentage integer formats).

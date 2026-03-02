@@ -16,58 +16,60 @@ export default function UploadPage() {
         setErrorMsg('');
         setLoading(true);
 
-        if (mode === 'single') {
-            const isValidUrl = mapsUrl.includes('google.com/maps') ||
-                mapsUrl.includes('goo.gl/maps') ||
-                mapsUrl.includes('maps.app.goo.gl');
+        try {
+            if (mode === 'single') {
+                const isValidUrl = mapsUrl.includes('google.com/maps') ||
+                    mapsUrl.includes('goo.gl/maps') ||
+                    mapsUrl.includes('maps.app.goo.gl');
 
-            if (!isValidUrl) {
-                setErrorMsg("Please enter a valid Google Maps link.");
-                setLoading(false);
-                return;
+                if (!isValidUrl) {
+                    setErrorMsg("Please enter a valid Google Maps link.");
+                    return;
+                }
+
+                const data = await analyzeImage(mapsUrl);
+
+                if (!data || !data.results) {
+                    setErrorMsg('Analysis failed — the AI could not process this URL. Please try a different Google Maps link.');
+                    return;
+                }
+
+                // v2.0: use analysis_session_id from the response as the stable route ID
+                const routeId = data.v2
+                    ? data.results.analysis_session_id
+                    : Math.random().toString(36).substring(7);
+                const storageKey = data.v2
+                    ? `gravi_v2_analysis_${routeId}`
+                    : `gravi_analysis_${routeId}`;
+                localStorage.setItem(storageKey, JSON.stringify({ v2: data.v2, results: data.results }));
+                navigate(`/app/analysis/${routeId}`);
+
+            } else {
+                // Bulk Mode
+                if (!driveUrl.includes('drive.google.com/drive/folders/')) {
+                    setErrorMsg("Please enter a valid Google Drive Folder link (must include /drive/folders/).");
+                    return;
+                }
+
+                const bulkAnalysis = await analyzeDriveFolder(driveUrl);
+
+                if (!bulkAnalysis || !bulkAnalysis.is_valid_source) {
+                    setErrorMsg(bulkAnalysis?.reasoning || 'Bulk analysis failed. Please check the folder link.');
+                    return;
+                }
+
+                const mockId = Math.random().toString(36).substring(7);
+                localStorage.setItem(`gravi_bulk_analysis_${mockId}`, JSON.stringify({
+                    sourceUrl: driveUrl,
+                    ...bulkAnalysis
+                }));
+                navigate(`/app/bulk-analysis/${mockId}`);
             }
-
-            const vision = await analyzeImage(mapsUrl);
-
-            if (!vision.is_valid_grocery_store) {
-                setErrorMsg(vision.reasoning);
-                setLoading(false);
-                return;
-            }
-
-            const mockId = Math.random().toString(36).substring(7);
-            localStorage.setItem(`gravi_analysis_${mockId}`, JSON.stringify({
-                storeInfo: { sourceUrl: mapsUrl, storeName: 'Extracted from Maps' },
-                vision,
-                image: "https://images.unsplash.com/photo-1604719312566-8912e9227c6a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80"
-            }));
-
+        } catch (err) {
+            console.error('handleAnalyze error:', err);
+            setErrorMsg(`Something went wrong: ${err.message || 'Unknown error. Please try again.'}`);
+        } finally {
             setLoading(false);
-            navigate(`/app/analysis/${mockId}`);
-        } else {
-            // Bulk Mode
-            if (!driveUrl.includes('drive.google.com/drive/folders/')) {
-                setErrorMsg("Please enter a valid Google Drive Folder link (must include /drive/folders/).");
-                setLoading(false);
-                return;
-            }
-
-            const bulkAnalysis = await analyzeDriveFolder(driveUrl);
-
-            if (!bulkAnalysis.is_valid_source) {
-                setErrorMsg(bulkAnalysis.reasoning);
-                setLoading(false);
-                return;
-            }
-
-            const mockId = Math.random().toString(36).substring(7);
-            localStorage.setItem(`gravi_bulk_analysis_${mockId}`, JSON.stringify({
-                sourceUrl: driveUrl,
-                ...bulkAnalysis
-            }));
-
-            setLoading(false);
-            navigate(`/app/bulk-analysis/${mockId}`);
         }
     };
 

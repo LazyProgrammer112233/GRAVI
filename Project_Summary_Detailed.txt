@@ -1,0 +1,38 @@
+Project: GRAVI - General Retail Artificial Vision Intelligence
+
+1. WHAT THIS PROJECT DOES
+-------------------------
+GRAVI is an intelligence platform designed to analyze retail stores (e.g., Kiranas, Supermarkets) in India. It leverages advanced Vision AI to scan both storefront and interior shelf images. It automatically extracts store names, classifies the type of store, predicts authenticity, and vigorously detects specific Fast-Moving Consumer Goods (FMCG) brands present on the shelves. 
+
+2. USER FLOW IN BRIEF
+---------------------
+- URL Input: The user pastes a Google Maps URL (shortlink or full URL) into the React-based Analysis Dashboard.
+- Processing: The backend API receives the URL and runs the analysis in the background without further user interaction.
+- Dashboard Rendering: The application dynamically renders the results on an interactive dashboard, displaying store metadata, confidence percentages, FMCG brand distribution by category, AI-summarized review intelligence, and an overall computed store authenticity verdict.
+
+3. THE LOGIC BEHIND THIS PROJECT
+--------------------------------
+The core logic resides in a Supabase Edge Function (Deno runtime) which acts as a pipeline between Google APIs, Vision AI, and a custom Deterministic Validation Engine.
+
+A. URL Resolution & Place Discovery
+   - Resolves Google Maps shortlinks into full location queries.
+   - Uses the Google Places API to find the exact location's unique 'place_id'.
+
+B. Image & Metadata Fetching
+   - Fetches key store metadata (types, average rating, recent reviews).
+   - Retrieves an array of up to 4 photos available on the Google listing. This ensures the AI receives visual context of both the exterior storefront and the interior shelves.
+
+C. Parallel Deep Vision AI Scanning & Review Summarization
+   - The array of photos (converted to Base64) is pushed to the Groq API targeting the 'meta-llama/llama-4-scout-17b-16e-instruct' Vision Model.
+   - The AI operates under a highly strict system prompt containing a hardcoded FMCG classification database. It scans the exterior to read signboards and rigorously hunts the interior images for specific packaged product logos across a wide range of categories (e.g., Snacks, Beverages, Dairy, Staples).
+   - In parallel, a separate LLM call reads and summarizes recent customer reviews to deduce overall sentiment and extract common themes.
+
+D. Deterministic Validation Engine
+   - Calculates a final Authenticity Score (out of 100) using a pure Python/JS calculation, protecting the verdict from LLM hallucinations.
+   - The scoring evaluates:
+     - Category Match Score (Does the store type match the branded items found?)
+     - Brand Presence Score (How many distinct FMCG brands are visible?)
+     - Review Consistency Score (Are the reviews referencing standard grocery/retail scenarios?)
+     - Image Recency Score
+
+The output natively bundles this into a rigidly formatted JSON payload that seamlessly populates the frontend visualization panels.

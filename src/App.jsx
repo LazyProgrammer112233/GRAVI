@@ -11,31 +11,76 @@ import logoImg from './assets/logo11.png';
 
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }) => {
-  const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [session, setSession] = useState(undefined); // undefined means "resolving"
+  const [isOfflineMode, setIsOfflineMode] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setLoading(false);
+    let active = true;
+
+    const resolveSession = async () => {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (!active) return;
+        if (error) throw error;
+        setSession(data.session);
+      } catch (err) {
+        if (!active) return;
+        // Supabase threw a network error (like "Failed to fetch"). 
+        // We will attempt to fall back to the localStorage cached session.
+        const cachedStr = localStorage.getItem('gravi-supabase-auth');
+        if (cachedStr) {
+          try {
+            const cached = JSON.parse(cachedStr);
+            // Different SDK versions scope the session under different keys
+            const rawSession = cached?.currentSession || cached?.session || cached;
+            if (rawSession && rawSession.access_token) {
+              setSession(rawSession);
+              setIsOfflineMode(true);
+              return;
+            }
+          } catch { /* ignore cache parse errors */ }
+        }
+        // If there's no cache, we legitimately cannot log them in
+        setSession(null);
+      }
+    };
+
+    resolveSession();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) setSession(session);
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
-  if (loading) return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading...</div>;
-
-  if (!session) {
-    return <Navigate to="/login" />;
+  if (session === undefined) {
+    return (
+      <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '1rem' }}>
+        <div style={{ width: 32, height: 32, border: '3px solid rgba(255,255,255,0.1)', borderTop: '3px solid #3b82f6', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ fontSize: '0.875rem', color: 'rgba(255,255,255,0.5)' }}>Connecting to Supabase...</div>
+      </div>
+    );
   }
 
-  return children;
+  if (!session) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return (
+    <>
+      {isOfflineMode && (
+        <div style={{ background: 'rgba(251,191,36,0.15)', borderBottom: '1px solid rgba(251,191,36,0.3)', padding: '0.5rem 1rem', fontSize: '0.75rem', color: '#fbbf24', textAlign: 'center', fontWeight: 600 }}>
+          ⚠ Network issues detected — running on cached login session.
+        </div>
+      )}
+      {children}
+    </>
+  );
 };
 
 // App Layout Wrapper for internal pages

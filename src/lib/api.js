@@ -1,34 +1,44 @@
 import { supabase } from './supabase';
 
-const HF_API_URL = "https://router.huggingface.co/v1/chat/completions";
+const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 // A public generic store image proxy to bypass browser CORS when we don't have real drive bytes
 const MOCK_STORE_IMG_URL = "https://images.unsplash.com/photo-1604719312566-8912e9227c6a?ixlib=rb-4.0.3&auto=format&fit=crop&w=800&q=80";
 
 async function fetchQwenAnalysis(imageUrl, fileName) {
-    const token = import.meta.env.VITE_HF_TOKEN;
+    const token = import.meta.env.VITE_GROQ_API_KEY;
     if (!token) {
-        throw new Error("Missing VITE_HF_TOKEN in .env variables.");
+        throw new Error("Missing VITE_GROQ_API_KEY in .env variables.");
     }
 
-    const systemPrompt = `You are an expert retail analysis AI. Look at this image of a retail store and return ONLY a valid JSON object matching this exact schema. Do not include markdown blocks like \`\`\`json.
+    const systemPrompt = `You are an elite retail intelligence Vision AI. Analyze the primary image and any interior images of the retail store provided. Return ONLY a valid JSON object matching the exact schema below without markdown formatting.
+
+CRITICAL INSTRUCTIONS TO PREVENT HALLUCINATIONS & ENSURE EXTREME ACCURACY:
+1. "store_name": Extract the precise actual name of the shop/store from the main exterior signboard. If not visible, return "Unknown". Do NOT confuse product brands with the store name.
+2. "visible_brands": You MUST deeply and precisely scan the INTERIOR images, shelves, and signs. Detect specific packaged products visible on the shelves or in refrigerators, then aggressively identify their parent FMCG brand (e.g., if you see a red soda can, identify "Coca-Cola"; if you see yellow chips, identify "Lay's"; if you see blue soap wrappers, identify "Rin"). You MUST try to find an absolute minimum of 4 to 5 distinct FMCG brands visible inside the store.
+3. DO NOT include the store name in "visible_brands". This array is strictly for FMCG brands sold inside. You must act like an expert analyzing product packaging shapes, shapes, and colors.
+4. "dominant_brand": Identify the most heavily stocked or prominent FMCG brand across all visible products.
+5. "store_type_confidence": MUST be an integer between 0 and 100 representing your percentage of confidence (e.g. 95). Do not use decimals.
+6. Base everything specifically on visual evidence in the image(s). Look extremely closely at logos, packaging colors, and shapes to infer brands if text is slightly blurry.
+
 {
+  "store_name": "string",
   "is_valid_grocery_store": true/false,
   "store_type": "supermarket_shelf" or "kirana_exterior" or "other",
   "store_type_confidence": 90,
   "estimated_store_size": "Large" or "Medium" or "Small",
   "visible_brands": ["BrandA", "BrandB"],
-  "dominant_brand": "BrandA",
+  "dominant_brand": "BrandA" or "None",
   "ad_materials_detected": ["poster", "dangler"] or [],
   "category_detected": "Snacks",
   "shelf_density_estimate": "High Density" or "Sparse" or "Mixed",
-  "out_of_stock_signals": "Minor gaps" or "None",
+  "out_of_stock_signals": "Yes" or "No" or "Unknown",
   "competitive_brand_presence": "High fragmentation" or "Low",
   "reasoning": "Brief explanation of analysis"
 }`;
 
     const payload = {
-        model: "Qwen/Qwen3.5-397B-A17B:novita",
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
         messages: [
             {
                 role: "user",
@@ -37,10 +47,12 @@ async function fetchQwenAnalysis(imageUrl, fileName) {
                     { type: "image_url", image_url: { url: imageUrl } }
                 ]
             }
-        ]
+        ],
+        max_tokens: 500,
+        stream: false
     };
 
-    const response = await fetch(HF_API_URL, {
+    const response = await fetch(GROQ_API_URL, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
@@ -50,7 +62,7 @@ async function fetchQwenAnalysis(imageUrl, fileName) {
     });
 
     if (!response.ok) {
-        throw new Error(`HF API HTTP Error: ${response.status} - ${await response.text()}`);
+        throw new Error(`Groq API HTTP Error: ${response.status} - ${await response.text()}`);
     }
 
     const data = await response.json();
@@ -89,29 +101,34 @@ async function fetchQwenAnalysis(imageUrl, fileName) {
 }
 
 export async function analyzeImage(gmapsUrl) {
-    try {
-        console.log(`Calling Supabase Edge Function to analyze: ${gmapsUrl}`);
-        const { data, error } = await supabase.functions.invoke('analyze-maps-url', {
-            body: { mapsUrl: gmapsUrl, storeId: 'frontend_direct_run_no_store_id' }
-        });
+    console.log(`Calling Supabase Edge Function to analyze: ${gmapsUrl}`);
 
-        if (error) {
-            console.error("Supabase Edge Function returned an error:", error);
-            throw error;
-        }
+    const { data, error } = await supabase.functions.invoke('analyze-maps-url', {
+        body: { mapsUrl: gmapsUrl }
+    });
 
-        if (data && data.success && data.results) {
-            return data.results;
-        } else {
-            throw new Error(data?.error || "Unknown error from server.");
-        }
-    } catch (e) {
-        console.error("Single image analysis failed:", e);
-        return {
-            is_valid_grocery_store: false,
-            reasoning: `AI Processing Failed: ${e.message} (Please verify backend configuration.)`
-        };
+    console.log('Edge Function raw response — data:', data, '| error:', error);
+
+    if (error) {
+        throw new Error(`Edge Function Error: ${error.message || JSON.stringify(error)}`);
     }
+
+    // v2.0 response: top-level { success, v2, results }
+    if (data && data.v2 === true && data.results) {
+        // Surface FAILED verification as an error (don't return broken data to UI)
+        if (data.results.verification_status === 'FAILED') {
+            throw new Error(`Verification failed: ${data.results.reason || 'Store could not be uniquely identified.'}`);
+        }
+        // Return v2 results directly — UploadPage will use analysis_session_id as the route key
+        return { v2: true, results: data.results };
+    }
+
+    // Legacy v1 response: { success, results }
+    if (data && data.success && data.results) {
+        return { v2: false, results: data.results };
+    }
+
+    throw new Error(data?.reason || data?.error || `Unexpected response format: ${JSON.stringify(data)}`);
 }
 
 export async function analyzeDriveFolder(folderUrl) {

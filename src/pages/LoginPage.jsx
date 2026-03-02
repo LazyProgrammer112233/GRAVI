@@ -27,7 +27,19 @@ export default function LoginPage() {
                 alert('Check your email for the confirmation link!');
             }
         } catch (err) {
-            setError(err.message);
+            const rawMsg = err.message || '';
+
+            // Detect network timeouts / unreachable endpoints
+            if (
+                err.name === 'AbortError' ||
+                rawMsg.toLowerCase().includes('failed to fetch') ||
+                rawMsg.toLowerCase().includes('network error') ||
+                rawMsg.toLowerCase().includes('timeout')
+            ) {
+                setError('Network error: Unable to reach the authentication server. Please check your internet connection or try again later.');
+            } else {
+                setError(rawMsg);
+            }
         } finally {
             setLoading(false);
         }

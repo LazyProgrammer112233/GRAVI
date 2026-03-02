@@ -1,17 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowRight, Activity, ShieldCheck, Zap } from 'lucide-react';
 import logoImg from '../assets/logo11.png';
 
 export default function LandingPage() {
     const navigate = useNavigate();
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+    const blobRef = useRef(null);
 
     useEffect(() => {
         const handleMouseMove = (e) => {
-            setMousePos({ x: e.clientX, y: e.clientY });
+            if (blobRef.current) {
+                // Apply hardware accelerated transform and combine with centering logic
+                blobRef.current.style.transform = `translate3d(${e.clientX}px, ${e.clientY}px, 0) translate3d(-50%, -50%, 0)`;
+            }
         };
-        window.addEventListener('mousemove', handleMouseMove);
+
+        window.addEventListener('mousemove', handleMouseMove, { passive: true });
         return () => window.removeEventListener('mousemove', handleMouseMove);
     }, []);
 
@@ -20,10 +24,7 @@ export default function LandingPage() {
             {/* Dynamic Cursor Blob */}
             <div
                 className="cursor-blob"
-                style={{
-                    left: `${mousePos.x}px`,
-                    top: `${mousePos.y}px`,
-                }}
+                ref={blobRef}
             />
 
             {/* Navigation */}
