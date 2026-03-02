@@ -22,6 +22,15 @@ jobs:
         with:
           version: latest
 
+      - name: Set Supabase secrets for v2 pipeline
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase secrets set \
+            ROBOFLOW_API_KEY="${{ secrets.ROBOFLOW_API_KEY }}" \
+            HF_API_KEY="${{ secrets.HF_API_KEY }}" \
+            --project-ref iwdxokuakjshsagazjvu
+
       - name: Deploy analyze-maps-url function
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
