@@ -127,6 +127,33 @@ export async function analyzeImage(gmapsUrl) {
     throw new Error(data?.reason || data?.error || `Unexpected response format: ${JSON.stringify(data)}`);
 }
 
+/**
+ * Deep Vision v2 — 3-layer pipeline (YOLO → OCR → Qwen-VL)
+ * Calls the analyze-maps-url-v2 edge function.
+ */
+export async function analyzeImageV2(gmapsUrl) {
+    console.log(`[V2] Calling 3-layer pipeline for: ${gmapsUrl}`);
+
+    const { data, error } = await supabase.functions.invoke('analyze-maps-url-v2', {
+        body: { mapsUrl: gmapsUrl }
+    });
+
+    console.log('[V2] Edge Function response — data:', data, '| error:', error);
+
+    if (error) {
+        throw new Error(`V2 Edge Function Error: ${error.message || JSON.stringify(error)}`);
+    }
+
+    if (data && data.v2_3layer === true && data.results) {
+        if (data.results.verification_status === 'FAILED') {
+            throw new Error(`V2 Verification failed: ${data.results.reason || 'Store could not be identified.'}`);
+        }
+        return { v2_3layer: true, results: data.results };
+    }
+
+    throw new Error(data?.reason || data?.error || `Unexpected V2 response: ${JSON.stringify(data)}`);
+}
+
 export async function analyzeDriveFolder(folderUrl) {
     try {
         console.log(`Calling Supabase Edge Function to analyze Drive folder.`);

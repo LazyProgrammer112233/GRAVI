@@ -45,3 +45,11 @@ jobs:
           supabase functions deploy ai-analysis \
             --project-ref iwdxokuakjshsagazjvu \
             --no-verify-jwt
+
+      - name: Deploy analyze-maps-url-v2 function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          supabase functions deploy analyze-maps-url-v2 \
+            --project-ref iwdxokuakjshsagazjvu \
+            --no-verify-jwt
