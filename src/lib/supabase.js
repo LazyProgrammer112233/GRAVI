@@ -1,7 +1,8 @@
 import { createClient } from '@supabase/supabase-js';
 
 // Route traffic through the Vercel/Vite reverse proxy to bypass ISP domain blocks
-const supabaseUrl = '/api/supabase';
+// Supabase SDK requires an absolute URL, so we construct it dynamically from the current origin
+const supabaseUrl = typeof window !== 'undefined' ? `${window.location.origin}/api/supabase` : '/api/supabase';
 const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml3ZHhva3Vha2pzaHNhZ2F6anZ1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4MzYyMjcsImV4cCI6MjA4NzQxMjIyN30.xJdmiWFrYruSiuK3f3LRc1_vUhNfNBcIsOimvPxNAhY';
 
 const customFetch = (url, options) => {
