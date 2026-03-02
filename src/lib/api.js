@@ -144,6 +144,12 @@ export async function analyzeImageV2(gmapsUrl) {
         throw new Error(`V2 Edge Function Error: ${error.message || JSON.stringify(error)}`);
     }
 
+    // Top-level FAILED (e.g. missing API keys, no images, place not found)
+    if (data && data.verification_status === 'FAILED') {
+        throw new Error(data.reason || 'V2 analysis failed. Please try again.');
+    }
+
+    // Successful v2_3layer response
     if (data && data.v2_3layer === true && data.results) {
         if (data.results.verification_status === 'FAILED') {
             throw new Error(`V2 Verification failed: ${data.results.reason || 'Store could not be identified.'}`);

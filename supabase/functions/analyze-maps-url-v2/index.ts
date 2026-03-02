@@ -407,11 +407,11 @@ serve(async (req: Request) => {
         if (!mapsUrl) return failedResponse("mapsUrl is required", analysisSessionId);
 
         const googleApiKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
-        if (!googleApiKey) throw new Error("GOOGLE_PLACES_API_KEY not set.");
+        if (!googleApiKey) return failedResponse("Server misconfiguration: GOOGLE_PLACES_API_KEY not set in Supabase secrets.", analysisSessionId);
         const roboflowApiKey = Deno.env.get('ROBOFLOW_API_KEY');
-        if (!roboflowApiKey) throw new Error("ROBOFLOW_API_KEY not set.");
+        if (!roboflowApiKey) return failedResponse("Server misconfiguration: ROBOFLOW_API_KEY not set in Supabase secrets. Add it at: Supabase Dashboard → Project Settings → Edge Functions → Secrets", analysisSessionId);
         const hfApiKey = Deno.env.get('HF_API_KEY');
-        if (!hfApiKey) throw new Error("HF_API_KEY not set.");
+        if (!hfApiKey) return failedResponse("Server misconfiguration: HF_API_KEY not set in Supabase secrets. Add it at: Supabase Dashboard → Project Settings → Edge Functions → Secrets", analysisSessionId);
 
         // ── STEP 1: URL Resolution ──────────────────────────────────────────────
         let searchQuery = mapsUrl;
@@ -655,12 +655,14 @@ serve(async (req: Request) => {
     } catch (err: any) {
         console.error(`[${analysisSessionId}] v2 Error:`, err);
         return new Response(JSON.stringify({
+            success: false,
+            v2_3layer: true,
             analysis_session_id: analysisSessionId,
             verification_status: "FAILED",
             reason: err?.message || "Unknown server error",
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-            status: 500,
+            status: 200,
         });
     }
 });
