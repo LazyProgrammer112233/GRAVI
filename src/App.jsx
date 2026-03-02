@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import UploadPage from './pages/UploadPage';
 import AnalysisDashboard from './pages/AnalysisDashboard';
+import AIAnalysisPage from './pages/AIAnalysisPage';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import BulkAnalysisDashboard from './pages/BulkAnalysisDashboard';
@@ -139,6 +140,14 @@ function App() {
         element={
           <ProtectedRoute>
             <AppLayout><BulkAnalysisDashboard /></AppLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/app/ai-analysis/:id"
+        element={
+          <ProtectedRoute>
+            <AppLayout><AIAnalysisPage /></AppLayout>
           </ProtectedRoute>
         }
       />

@@ -18,13 +18,6 @@ function generateUUID(): string {
 }
 
 // ============================================================
-// DYNAMIC FMCG BRAND RECOGNITION (REPLACED HARD LIST)
-// ============================================================
-// Removed rigid FMCG_DATABASE.
-// The Vision LLM is now instructed to dynamically read labels from the images
-// and construct its own categorized list of brands (known or unknown).
-
-// ============================================================
 // ALLOWED INDIAN GROCERY STORE TAXONOMY (CLOSED SET)
 // ============================================================
 const ALLOWED_STORE_TYPES = new Set([
@@ -49,7 +42,7 @@ const ALLOWED_STORE_TYPES = new Set([
 ]);
 
 // ============================================================
-// HELPER: Haversine distance (metres) between two lat/lng pairs
+// HELPER: Haversine distance (metres)
 // ============================================================
 function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number): number {
     const R = 6_371_000;
@@ -61,7 +54,7 @@ function haversineMetres(lat1: number, lng1: number, lat2: number, lng2: number)
 }
 
 // ============================================================
-// HELPER: Token similarity score (0–1) between two strings
+// HELPER: Token similarity score (0–1)
 // ============================================================
 function tokenSimilarity(a: string, b: string): number {
     const tokA = new Set(a.toLowerCase().split(/\s+/).filter(Boolean));
@@ -87,7 +80,7 @@ function failedResponse(reason: string, sessionId: string) {
 }
 
 // ============================================================
-// STAGE 1: VISION AI — strict classification
+// STAGE 1: VISION AI — combined store classification
 // ============================================================
 async function runVisionAnalysis(
     base64Images: string[],
@@ -162,6 +155,83 @@ Return ONLY valid JSON, no markdown:
 }
 
 // ============================================================
+// STAGE 1b: PER-IMAGE ANALYSIS — type + findings per image
+// ============================================================
+async function runPerImageAnalysis(
+    base64Image: string,
+    imageIndex: number,
+    llmApiKey: string,
+): Promise<{ image_index: number; type: string; findings: string[] }> {
+    const API_URL = "https://api.groq.com/openai/v1/chat/completions";
+
+    const prompt = `You are a retail store image analyst. Analyze this single retail store image.
+
+STRICT RULES:
+1. ONLY report what is DIRECTLY and CLEARLY visible. Do NOT guess or infer.
+2. If store name is not clearly readable on a signboard → return "Store name not clearly visible"
+3. If no FMCG brands detected → return "No identifiable FMCG brands detected"
+4. Do NOT fabricate brand names. Only report clearly visible text/logos.
+5. For shelf density: count visible product rows/units objectively. High=densely packed, Medium=partially stocked, Low=sparse/empty shelves.
+
+Return ONLY valid JSON (no markdown):
+{
+  "image_index": ${imageIndex},
+  "type": "Exterior" or "Interior" or "Shelf" or "Mixed",
+  "findings": [
+    "up to 3 factual bullet strings about what is directly visible"
+  ]
+}
+
+Rules for type classification:
+- "Exterior": storefront, facade, signboard, entrance visible
+- "Interior": inside store, counters, aisles visible
+- "Shelf": close-up of product shelves/racks
+- "Mixed": both exterior and interior elements visible`;
+
+    const payload = {
+        model: "meta-llama/llama-4-scout-17b-16e-instruct",
+        messages: [{
+            role: "user",
+            content: [
+                { type: "text", text: prompt },
+                { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Image}` } }
+            ]
+        }],
+        max_tokens: 300,
+        stream: false,
+        temperature: 0.05,
+    };
+
+    try {
+        const response = await fetch(API_URL, {
+            method: "POST",
+            headers: { "Authorization": `Bearer ${llmApiKey}`, "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+        });
+
+        if (!response.ok) throw new Error(`Per-image LLM error: ${response.status}`);
+
+        const data = await response.json();
+        const raw = data.choices[0].message.content;
+        const cleaned = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        const parsed = JSON.parse(jsonMatch ? jsonMatch[0] : cleaned);
+
+        return {
+            image_index: imageIndex,
+            type: parsed.type || "Mixed",
+            findings: Array.isArray(parsed.findings) ? parsed.findings.slice(0, 3) : ["Analysis unavailable"],
+        };
+    } catch {
+        return {
+            image_index: imageIndex,
+            type: "Unknown",
+            findings: ["Image analysis unavailable"],
+        };
+    }
+}
+
+// ============================================================
 // STAGE 2: REVIEW SUMMARY AI — themes + sentiment
 // ============================================================
 async function runReviewSummary(
@@ -215,7 +285,7 @@ Return ONLY:
 }
 
 // ============================================================
-// STAGE 3: DETERMINISTIC AUTHENTICITY SCORING
+// STAGE 3a: ORIGINAL DETERMINISTIC AUTHENTICITY SCORING
 // ============================================================
 function computeAuthenticityScore(
     googleTypes: string[],
@@ -268,6 +338,60 @@ function computeAuthenticityScore(
 }
 
 // ============================================================
+// STAGE 3b: NEW V2 AUTHENTICITY SCORE (deterministic formula)
+// Rating(40%) + Sentiment(30%) + Review Volume(15%) + Image Count(15%)
+// ============================================================
+function computeAuthenticityScoreV2(
+    avgRating: number,
+    totalReviews: number,
+    recentReviews: Array<{ rating: number; text: string }>,
+    imagesCount: number,
+): { score: number; breakdown: { rating_score: number; sentiment_score: number; review_volume_score: number; image_score: number }; insufficient_data: boolean } {
+    // Check for missing data
+    const hasMissingData = avgRating === 0 && totalReviews === 0;
+    if (hasMissingData) {
+        return {
+            score: 0,
+            breakdown: { rating_score: 0, sentiment_score: 0, review_volume_score: 0, image_score: 0 },
+            insufficient_data: true,
+        };
+    }
+
+    // Rating score (0–40): (rating / 5) * 40
+    const ratingScore = Math.round((Math.min(avgRating, 5) / 5) * 40);
+
+    // Sentiment score (0–30): based on positive reviews (rating >= 4 counts as positive)
+    let sentimentScore = 0;
+    if (recentReviews.length > 0) {
+        const positiveCount = recentReviews.filter(r => r.rating >= 4).length;
+        sentimentScore = Math.round((positiveCount / recentReviews.length) * 30);
+    }
+
+    // Review Volume score (0–15)
+    let reviewVolumeScore = 5;
+    if (totalReviews >= 200) reviewVolumeScore = 15;
+    else if (totalReviews >= 50) reviewVolumeScore = 10;
+
+    // Image score (0–15)
+    let imageScore = 5;
+    if (imagesCount >= 20) imageScore = 15;
+    else if (imagesCount >= 5) imageScore = 10;
+
+    const totalScore = Math.min(100, ratingScore + sentimentScore + reviewVolumeScore + imageScore);
+
+    return {
+        score: totalScore,
+        breakdown: {
+            rating_score: ratingScore,
+            sentiment_score: sentimentScore,
+            review_volume_score: reviewVolumeScore,
+            image_score: imageScore,
+        },
+        insufficient_data: false,
+    };
+}
+
+// ============================================================
 // MAIN HANDLER
 // ============================================================
 serve(async (req: Request) => {
@@ -287,7 +411,7 @@ serve(async (req: Request) => {
         const llmApiKey = Deno.env.get('GROQ_API_KEY') ?? '';
         if (!llmApiKey) throw new Error("GROQ_API_KEY not set.");
 
-        // ── PHASE 1 STEP 1: URL Resolution & Coordinate Extraction ──────────────────────────
+        // ── STEP 1: URL Resolution & Coordinate Extraction ──────────────────────────
         let searchQuery = mapsUrl;
         let resolvedUrl = mapsUrl;
         let coordsStr = ""; // e.g., "15.3949851,73.8163628"
@@ -297,24 +421,21 @@ serve(async (req: Request) => {
                 const resolveRes = await fetch(mapsUrl, { method: 'HEAD', redirect: 'follow' });
                 resolvedUrl = resolveRes.url;
 
-                // Extract Name Search Query
                 const placeMatch = resolvedUrl.match(/\/place\/([^/@?]+)/);
                 if (placeMatch?.[1]) {
                     searchQuery = decodeURIComponent(placeMatch[1].replace(/\+/g, ' '));
                 }
 
-                // Strictly Extract GPS Coordinates from /@lat,lng,z bounds in either Shortlink or Longlink
                 const coordsMatch = resolvedUrl.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
                 if (coordsMatch) {
                     coordsStr = `${coordsMatch[1]},${coordsMatch[2]}`;
-                    console.log(`[${analysisSessionId}] Active GPS Coordinate Constraint Found: ${coordsStr}`);
+                    console.log(`[${analysisSessionId}] GPS Constraint: ${coordsStr}`);
                 }
             } catch { /* fall back to raw URL */ }
         }
         console.log(`[${analysisSessionId}] Resolved search query: ${searchQuery}`);
 
-        // ── PHASE 1 STEP 2: Find Place — Strict Bound ───────────────────────
-        // Append location bias if coords were captured to aggressively bind the text search to that exact location
+        // ── STEP 2: Find Place — Strict Bound ───────────────────────
         const locationBias = coordsStr ? `&locationbias=circle:50@${coordsStr}` : "";
         const findPlaceUrl = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(searchQuery)}&inputtype=textquery&fields=place_id,name${locationBias}&key=${googleApiKey}`;
         const fpRes = await fetch(findPlaceUrl);
@@ -331,7 +452,7 @@ serve(async (req: Request) => {
         const placeName = fpData.candidates[0].name;
         console.log(`[${analysisSessionId}] Unique Place ID: ${placeId} | Name: ${placeName}`);
 
-        // ── PHASE 1 STEP 3: Full Place Details ──────────────────────
+        // ── STEP 3: Full Place Details ──────────────────────
         const detailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${placeId}&fields=name,formatted_address,geometry,types,rating,user_ratings_total,reviews,photos,business_status&key=${googleApiKey}`;
         const detailsRes = await fetch(detailsUrl);
         const detailsData = await detailsRes.json();
@@ -342,7 +463,7 @@ serve(async (req: Request) => {
 
         const place = detailsData.result;
 
-        // ── PHASE 1 STEP 5: Build Immutable Identity Lock ───────────
+        // ── STEP 4: Build Immutable Identity Lock ───────────
         const identityLock = {
             place_id: placeId,
             name: place.name || placeName,
@@ -350,11 +471,11 @@ serve(async (req: Request) => {
             lng: place.geometry?.location?.lng ?? null,
             address: place.formatted_address || "Unknown",
             review_count: place.user_ratings_total || 0,
+            google_types: place.types || [],
         };
         Object.freeze(identityLock);
         console.log(`[${analysisSessionId}] Identity Lock: ${JSON.stringify(identityLock)}`);
 
-        // ── PHASE 1 STEP 4: Photo Fetch (max 4, same place_id) ──────
         const googleTypes: string[] = place.types || [];
         const avgRating: number = place.rating || 0;
 
@@ -369,6 +490,7 @@ serve(async (req: Request) => {
                 date: new Date(r.time * 1000).toISOString().split('T')[0],
             }));
 
+        // ── STEP 5: Photo Fetch (max 4, same place_id) ──────
         const photos = place.photos || [];
         const photoRefs: string[] = photos.slice(0, 4).map((p: any) => p.photo_reference);
         console.log(`[${analysisSessionId}] Fetching ${photoRefs.length} photos...`);
@@ -394,14 +516,21 @@ serve(async (req: Request) => {
             return failedResponse("No images could be downloaded for this listing.", analysisSessionId);
         }
 
-        // ── PHASE 2 + PHASE 3 STEP 6: Parallel LLM Calls ───────────
-        console.log(`[${analysisSessionId}] Running Vision AI + Review Summary in parallel...`);
-        const [visionResult, reviewIntelligence] = await Promise.all([
+        // ── STEP 6: Parallel LLM Calls ────────────────────────────
+        // Combined vision + review summary + per-image analysis all run in parallel
+        console.log(`[${analysisSessionId}] Running Vision AI + Review Summary + Per-Image Analysis in parallel...`);
+
+        const perImagePromises = base64Images.map((b64, idx) =>
+            runPerImageAnalysis(b64, idx + 1, llmApiKey)
+        );
+
+        const [visionResult, reviewIntelligence, ...perImageResults] = await Promise.all([
             runVisionAnalysis(base64Images, llmApiKey, identityLock.name, googleTypes),
             runReviewSummary(recentReviews, llmApiKey),
+            ...perImagePromises,
         ]);
 
-        // ── PHASE 2: Enforce closed store type taxonomy ──────────────
+        // ── STEP 7: Enforce closed store type taxonomy ───────────────
         const rawStoreType: string = visionResult.store_type || "UNCLASSIFIED";
         const storeType = ALLOWED_STORE_TYPES.has(rawStoreType) ? rawStoreType : "UNCLASSIFIED";
         const confidenceScore: number = typeof visionResult.confidence_score === 'number'
@@ -411,11 +540,8 @@ serve(async (req: Request) => {
             : 0;
         const storeTypeConfidence = confidenceScore >= 75 ? "HIGH" : "LOW";
 
-        // ── PHASE 3: Forward Dynamics Brands ─────────────────────────
-        // We now accept the Vision AI's dynamically categorized brands directly.
+        // ── STEP 8: Forward Dynamic Brands ───────────────────────────
         const detectedBrands: Record<string, string[]> = visionResult.detected_brands || {};
-
-        // Clean out empty categories
         for (const key of Object.keys(detectedBrands)) {
             if (!Array.isArray(detectedBrands[key]) || detectedBrands[key].length === 0) {
                 delete detectedBrands[key];
@@ -423,13 +549,19 @@ serve(async (req: Request) => {
         }
         const detectedBrandsFlat = Object.values(detectedBrands).flat();
 
-        // ── PHASE 3: Deterministic Authenticity Score ────────────────
+        // ── STEP 9: Deterministic Authenticity Scores ─────────────────
         const { score: authenticityScore, risk_flags } = computeAuthenticityScore(
             googleTypes, detectedBrandsFlat, storeType, confidenceScore, base64Images.length,
         );
 
-        // ── PHASE 3: Pre-output Cross-Check (identity lock) ──────────
-        // Confirm place_id is unchanged from the identity lock — prevents contamination
+        const authenticityScoreV2 = computeAuthenticityScoreV2(
+            avgRating,
+            identityLock.review_count,
+            recentReviews,
+            base64Images.length,
+        );
+
+        // ── STEP 10: Pre-output Cross-Check ───────────────────────────
         if (!identityLock.place_id || identityLock.place_id !== placeId) {
             return failedResponse("Identity lock mismatch detected — analysis aborted.", analysisSessionId);
         }
@@ -458,9 +590,12 @@ serve(async (req: Request) => {
             shelf_density_score: Number(visionResult.shelf_density_score) || 0,
             authenticity_score: authenticityScore,
             risk_flags,
+            // ── NEW PHASE 1 FIELDS ──
+            image_analysis_breakdown: perImageResults,
+            authenticity_score_v2: authenticityScoreV2,
         };
 
-        console.log(`[${analysisSessionId}] Analysis complete. Score: ${authenticityScore} | Type: ${storeType} | Status: VERIFIED`);
+        console.log(`[${analysisSessionId}] Analysis complete. Score: ${authenticityScore} | V2 Score: ${authenticityScoreV2.score} | Type: ${storeType} | Status: VERIFIED`);
 
         return new Response(JSON.stringify({ success: true, v2: true, results: finalResponse }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' },

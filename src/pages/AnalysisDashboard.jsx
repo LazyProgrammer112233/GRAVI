@@ -3,7 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
     ArrowLeft, Store, Star, ShoppingCart, MessageSquare,
     ShieldCheck, CheckCircle, AlertTriangle, Image, Hash,
-    MapPin, Tag, TrendingUp, Package
+    MapPin, Tag, TrendingUp, Package, Sparkles, Camera,
+    ExternalLink
 } from 'lucide-react';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -111,8 +112,120 @@ function BrandChip({ name, category }) {
     );
 }
 
+// TYPE badge colour
+const TYPE_COLORS = {
+    Exterior: { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.35)', text: '#93c5fd' },
+    Interior: { bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.35)', text: '#c084fc' },
+    Shelf: { bg: 'rgba(20,184,166,0.15)', border: 'rgba(20,184,166,0.35)', text: '#5eead4' },
+    Mixed: { bg: 'rgba(251,191,36,0.15)', border: 'rgba(251,191,36,0.35)', text: '#fbbf24' },
+    Unknown: { bg: 'rgba(107,114,128,0.15)', border: 'rgba(107,114,128,0.35)', text: '#9ca3af' },
+};
+
+// ── NEW CARD: Images Analysed Overview ──────────────────────────────────────
+function ImagesAnalysedCard({ breakdown, totalImages }) {
+    if (!breakdown || breakdown.length === 0) {
+        return (
+            <Panel>
+                <PanelHeader icon={Camera} title="Images Analysed" iconColor="#38bdf8" />
+                <div style={{ color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '1.5rem', fontSize: '0.875rem' }}>
+                    No per-image breakdown available.
+                </div>
+            </Panel>
+        );
+    }
+
+    return (
+        <Panel glowColor="#38bdf8">
+            <PanelHeader icon={Camera} title="Images Analysed" iconColor="#38bdf8" />
+            <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ fontSize: '2rem', fontWeight: 800, color: '#38bdf8', lineHeight: 1 }}>{totalImages}</div>
+                <div style={{ fontSize: '0.72rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>Total Images<br />Processed</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                {breakdown.map((img) => {
+                    const tc = TYPE_COLORS[img.type] || TYPE_COLORS.Unknown;
+                    return (
+                        <div key={img.image_index} style={{ padding: '0.9rem 1rem', borderRadius: '0.75rem', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', marginBottom: '0.6rem' }}>
+                                <span style={{ fontSize: '0.7rem', fontWeight: 700, color: 'rgba(255,255,255,0.4)' }}>IMG {img.image_index}</span>
+                                <span style={{ padding: '0.15rem 0.6rem', borderRadius: 9999, fontSize: '0.7rem', fontWeight: 700, backgroundColor: tc.bg, border: `1px solid ${tc.border}`, color: tc.text }}>
+                                    {img.type}
+                                </span>
+                            </div>
+                            <ul style={{ margin: 0, paddingLeft: '1.1rem', display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                                {(img.findings || []).map((finding, fi) => (
+                                    <li key={fi} style={{ fontSize: '0.79rem', color: 'rgba(255,255,255,0.6)', lineHeight: 1.4 }}>{finding}</li>
+                                ))}
+                            </ul>
+                        </div>
+                    );
+                })}
+            </div>
+        </Panel>
+    );
+}
+
+// ── NEW CARD: Authentic Store Calculator Score ───────────────────────────────
+function AuthenticityScoreV2Card({ data }) {
+    if (!data) {
+        return (
+            <Panel>
+                <PanelHeader icon={TrendingUp} title="Authenticity Score (v2)" iconColor="#f97316" />
+                <div style={{ color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '1.5rem', fontSize: '0.875rem' }}>Data Not Available</div>
+            </Panel>
+        );
+    }
+
+    if (data.insufficient_data) {
+        return (
+            <Panel glowColor="#f97316">
+                <PanelHeader icon={TrendingUp} title="Authenticity Score (v2)" iconColor="#f97316" />
+                <div style={{ color: '#fbbf24', textAlign: 'center', padding: '1.5rem', fontSize: '0.85rem' }}>
+                    <AlertTriangle size={20} style={{ marginBottom: 8 }} /><br />
+                    Insufficient data for score calculation
+                </div>
+            </Panel>
+        );
+    }
+
+    const scoreColor = data.score >= 75 ? '#34d399' : data.score >= 50 ? '#fbbf24' : '#f87171';
+    const bd = data.breakdown || {};
+
+    return (
+        <Panel glowColor="#f97316">
+            <PanelHeader icon={TrendingUp} title="Authenticity Score (v2)" iconColor="#f97316" />
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                <div style={{ position: 'relative', width: 90, height: 90, flexShrink: 0 }}>
+                    <svg width="90" height="90" style={{ transform: 'rotate(-90deg)' }}>
+                        <circle cx="45" cy="45" r="38" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="7" />
+                        <circle cx="45" cy="45" r="38" fill="none" stroke={scoreColor} strokeWidth="7"
+                            strokeDasharray={2 * Math.PI * 38}
+                            strokeDashoffset={2 * Math.PI * 38 * (1 - data.score / 100)}
+                            strokeLinecap="round"
+                            style={{ transition: 'stroke-dashoffset 1.5s cubic-bezier(0.4,0,0.2,1)', filter: `drop-shadow(0 0 6px ${scoreColor})` }} />
+                    </svg>
+                    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                        <div style={{ fontSize: '1.4rem', fontWeight: 800, color: scoreColor, lineHeight: 1 }}>{data.score}</div>
+                        <div style={{ fontSize: '0.55rem', color: 'rgba(255,255,255,0.35)', textTransform: 'uppercase' }}>/100</div>
+                    </div>
+                </div>
+                <div style={{ flex: 1 }}>
+                    <AnimatedBar label="Google Rating" score={bd.rating_score ?? 0} max={40} />
+                    <AnimatedBar label="Review Sentiment" score={bd.sentiment_score ?? 0} max={30} />
+                    <AnimatedBar label="Review Volume" score={bd.review_volume_score ?? 0} max={15} />
+                    <AnimatedBar label="Image Count" score={bd.image_score ?? 0} max={15} />
+                </div>
+            </div>
+            <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.25)', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.75rem' }}>
+                Formula: Rating (40%) + Sentiment (30%) + Review Volume (15%) + Image Count (15%)
+            </div>
+        </Panel>
+    );
+}
+
 // ── V2 DASHBOARD ─────────────────────────────────────────────────────────────
-function DashboardV2({ r }) {
+function DashboardV2({ r, sessionId }) {
+    const navigate = useNavigate();
     const [expandedReview, setExpandedReview] = useState(null);
     const totalBrands = Object.values(r.detected_brands || {}).flat().length;
     const verdictColor = r.authenticity_score >= 75 ? '#34d399' : r.authenticity_score >= 50 ? '#fbbf24' : '#f87171';
@@ -123,6 +236,27 @@ function DashboardV2({ r }) {
     return (
         <div className="fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingBottom: '3rem' }}>
             <style>{`@keyframes shimmer { to { background-position: -200% 0; } }`}</style>
+
+            {/* ── ROW 0: Action Buttons ── */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <button
+                    onClick={() => navigate(`/app/ai-analysis/${sessionId}`)}
+                    style={{
+                        display: 'flex', alignItems: 'center', gap: 8,
+                        padding: '0.6rem 1.4rem', borderRadius: '0.75rem', border: 'none',
+                        background: 'linear-gradient(135deg, #7c3aed, #3b82f6)',
+                        color: '#fff', fontWeight: 700, fontSize: '0.875rem',
+                        cursor: 'pointer', boxShadow: '0 4px 20px rgba(124,58,237,0.4)',
+                        transition: 'all 0.2s',
+                    }}
+                    onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.boxShadow = '0 8px 28px rgba(124,58,237,0.55)'; }}
+                    onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = '0 4px 20px rgba(124,58,237,0.4)'; }}
+                >
+                    <Sparkles size={16} />
+                    AI Driven Analysis
+                    <ExternalLink size={13} style={{ opacity: 0.7 }} />
+                </button>
+            </div>
 
             {/* ── ROW 1: Verification Status Banner ── */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', padding: '0.9rem 1.4rem', borderRadius: '1rem', backgroundColor: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.25)' }}>
@@ -301,6 +435,12 @@ function DashboardV2({ r }) {
                     )}
                 </Panel>
             </div>
+
+            {/* ── ROW 5: Phase 1 NEW CARDS — Images Analysed + Authenticity Score V2 ── */}
+            <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: '1.5rem' }}>
+                <ImagesAnalysedCard breakdown={r.image_analysis_breakdown} totalImages={r.images_analyzed} />
+                <AuthenticityScoreV2Card data={r.authenticity_score_v2} />
+            </div>
         </div>
     );
 }
@@ -426,7 +566,7 @@ export default function AnalysisDashboard() {
             )}
 
             {payload && payload.v2 && payload.results && (
-                <DashboardV2 r={payload.results} />
+                <DashboardV2 r={payload.results} sessionId={id} />
             )}
 
             {payload && !payload.v2 && payload.results && (

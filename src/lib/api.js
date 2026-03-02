@@ -70,7 +70,6 @@ CRITICAL INSTRUCTIONS TO PREVENT HALLUCINATIONS & ENSURE EXTREME ACCURACY:
 
     try {
         contentStr = contentStr.replace(/```json/gi, '').replace(/```/g, '').trim();
-        // Extract just the JSON block if the model babbled
         const jsonMatch = contentStr.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             contentStr = jsonMatch[0];
@@ -81,7 +80,6 @@ CRITICAL INSTRUCTIONS TO PREVENT HALLUCINATIONS & ENSURE EXTREME ACCURACY:
         return {
             image_name: fileName,
             ...result,
-            // Fallbacks if LLM misses a field
             is_valid_grocery_store: result.is_valid_grocery_store ?? true,
             store_type: result.store_type ?? 'unknown',
             store_type_confidence: result.store_type_confidence ?? 80,
@@ -115,11 +113,9 @@ export async function analyzeImage(gmapsUrl) {
 
     // v2.0 response: top-level { success, v2, results }
     if (data && data.v2 === true && data.results) {
-        // Surface FAILED verification as an error (don't return broken data to UI)
         if (data.results.verification_status === 'FAILED') {
             throw new Error(`Verification failed: ${data.results.reason || 'Store could not be uniquely identified.'}`);
         }
-        // Return v2 results directly — UploadPage will use analysis_session_id as the route key
         return { v2: true, results: data.results };
     }
 
@@ -157,4 +153,70 @@ export async function analyzeDriveFolder(folderUrl) {
         console.error("Bulk processing failed:", e);
         throw e;
     }
+}
+
+/**
+ * Fetch AI-driven analysis for a store using the ai-analysis edge function.
+ * Reads cached analysis data from localStorage and sends it as structured JSON.
+ * 
+ * @param {string} storeId - The analysis session ID (used as localStorage key)
+ * @returns {Promise<Object>} - The 4-section AI analysis response
+ */
+export async function fetchAIAnalysis(storeId) {
+    // Read cached analysis from localStorage
+    const cached = localStorage.getItem(`gravi_v2_analysis_${storeId}`);
+    if (!cached) {
+        throw new Error("Analysis data not found. Please re-run the store analysis first.");
+    }
+
+    let payload;
+    try {
+        payload = JSON.parse(cached);
+    } catch {
+        throw new Error("Corrupted analysis cache. Please re-run the store analysis.");
+    }
+
+    if (!payload.results) {
+        throw new Error("Invalid analysis data structure in cache.");
+    }
+
+    const results = payload.results;
+
+    // Build the structured JSON input for the ai-analysis edge function
+    // LLM receives ONLY this structured data — no internet access
+    const analysisPayload = {
+        store_details: {
+            name: results.place_identity_lock?.name ?? "Unknown Store",
+            place_id: results.place_identity_lock?.place_id ?? null,
+            lat: results.place_identity_lock?.lat ?? null,
+            lng: results.place_identity_lock?.lng ?? null,
+            address: results.place_identity_lock?.address ?? null,
+            rating: results.ratings_data?.average_rating ?? 0,
+            total_reviews: results.ratings_data?.total_reviews ?? 0,
+            store_type: results.store_type ?? null,
+            google_types: results.place_identity_lock?.google_types ?? [],
+        },
+        reviews: results.recent_reviews ?? [],
+        image_analysis: results.image_analysis_breakdown ?? [],
+        detected_brands: results.detected_brands ?? {},
+        nearby_stores: [], // will be fetched by the edge function via Places API
+    };
+
+    console.log(`[fetchAIAnalysis] Calling ai-analysis edge function for store: ${analysisPayload.store_details.name}`);
+
+    const { data, error } = await supabase.functions.invoke('ai-analysis', {
+        body: analysisPayload,
+    });
+
+    console.log('[fetchAIAnalysis] Response:', data, '| Error:', error);
+
+    if (error) {
+        throw new Error(`AI Analysis Error: ${error.message || JSON.stringify(error)}`);
+    }
+
+    if (!data || !data.success) {
+        throw new Error(data?.error || "AI analysis returned an unexpected response.");
+    }
+
+    return data;
 }
