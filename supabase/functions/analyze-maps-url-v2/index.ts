@@ -182,7 +182,7 @@ serve(async (req: Request) => {
     const sid = generateUUID();
 
     try {
-        const { mapsUrl } = await req.json();
+        const { mapsUrl, fast_resolve_only } = await req.json();
         if (!mapsUrl) return failedResponse("mapsUrl is required", sid);
 
         const googleKey = Deno.env.get('GOOGLE_PLACES_API_KEY');
@@ -259,9 +259,35 @@ serve(async (req: Request) => {
         }));
 
         if (base64Images.length === 0) return failedResponse("No photos available for this listing.", sid);
-        console.log(`[${sid}] ${base64Images.length} images fetched for single-pass analysis.`);
+        console.log(`[${sid}] ${base64Images.length} images fetched.`);
 
-        // ── Single-Pass Vision Pipeline ───────────────────────────
+        // ── Fast Resolve Exit (for V5 RF-DETR PyTorch Microservice) ────────────────
+        if (fast_resolve_only) {
+            console.log(`[${sid}] Fast resolve requested for local vision engine. Exiting early.`);
+            return new Response(
+                JSON.stringify({
+                    success: true,
+                    v4_gemini: false,
+                    results: {
+                        analysis_session_id: sid,
+                        verification_status: "VERIFIED",
+                        pipeline_version: "v5.0-RF-DETR-Local-FastResolve",
+                        place_identity_lock: {
+                            name: placeName,
+                            address: place.formatted_address || "Unknown",
+                            place_id: placeId
+                        },
+                        raw_images: base64Images,
+                        rating: avgRating,
+                        total_reviews: reviewCount,
+                        recent_reviews: recentReviews
+                    }
+                }),
+                { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+            );
+        }
+
+        // ── Single-Pass Vision Pipeline (Gemini Legacy) ───────────────────────────
         const visionResult = await runVisionPipeline(base64Images, geminiKey);
 
         if (visionResult.is_interior === false || !visionResult.brands || visionResult.brands.length === 0) {
