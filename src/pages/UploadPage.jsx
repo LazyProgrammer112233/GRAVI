@@ -1,78 +1,74 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Link as LinkIcon, Loader2, MapPin, FolderSync, Layers, Zap } from 'lucide-react';
-import { analyzeImage, analyzeImageV2, analyzeDriveFolder } from '../lib/api';
+import { Link as LinkIcon, Loader2, MapPin, Settings } from 'lucide-react';
 import BackgroundParticles from '../components/BackgroundParticles';
+import { fetchInternVL2Analysis } from '../lib/inference';
 
 export default function UploadPage() {
     const navigate = useNavigate();
     const [loading, setLoading] = useState(false);
-    const [mode, setMode] = useState('single'); // 'single' or 'bulk'
-    const [pipeline, setPipeline] = useState('standard'); // 'standard' or 'deep'
     const [mapsUrl, setMapsUrl] = useState('');
-    const [driveUrl, setDriveUrl] = useState('');
     const [errorMsg, setErrorMsg] = useState('');
+
+    // Settings modal state
+    const [showSettings, setShowSettings] = useState(false);
+    const [replicateKey, setReplicateKey] = useState('');
+    const [supabaseKey, setSupabaseKey] = useState('');
+    const [supabaseUrl, setSupabaseUrl] = useState('');
+
+    useEffect(() => {
+        const storedReplicate = localStorage.getItem('gravi_replicate_key') || '';
+        const storedSupabaseKey = localStorage.getItem('gravi_supabase_key') || '';
+        const storedSupabaseUrl = localStorage.getItem('gravi_supabase_url') || '';
+        setReplicateKey(storedReplicate);
+        setSupabaseKey(storedSupabaseKey);
+        setSupabaseUrl(storedSupabaseUrl);
+    }, []);
+
+    const saveSettings = () => {
+        localStorage.setItem('gravi_replicate_key', replicateKey);
+        localStorage.setItem('gravi_supabase_key', supabaseKey);
+        localStorage.setItem('gravi_supabase_url', supabaseUrl);
+        setShowSettings(false);
+    };
 
     const handleAnalyze = async () => {
         setErrorMsg('');
         setLoading(true);
 
         try {
-            if (mode === 'single') {
-                const isValidUrl = mapsUrl.includes('google.com/maps') ||
-                    mapsUrl.includes('goo.gl/maps') ||
-                    mapsUrl.includes('maps.app.goo.gl');
-
-                if (!isValidUrl) {
-                    setErrorMsg("Please enter a valid Google Maps link.");
-                    return;
-                }
-
-                if (pipeline === 'deep') {
-                    const data = await analyzeImageV2(mapsUrl);
-                    if (!data || !data.results) {
-                        setErrorMsg('Deep Vision analysis failed. Please try a different Google Maps link.');
-                        return;
-                    }
-                    const routeId = data.results.analysis_session_id || Math.random().toString(36).substring(7);
-                    localStorage.setItem(`gravi_v4_analysis_${routeId}`, JSON.stringify({ v4_gemini: true, results: data.results }));
-                    navigate(`/app/analysis-v4/${routeId}`);
-                } else {
-                    const data = await analyzeImage(mapsUrl);
-                    if (!data || !data.results) {
-                        setErrorMsg('Analysis failed — the AI could not process this URL. Please try a different Google Maps link.');
-                        return;
-                    }
-                    const routeId = data.v2
-                        ? data.results.analysis_session_id
-                        : Math.random().toString(36).substring(7);
-                    const storageKey = data.v2
-                        ? `gravi_v2_analysis_${routeId}`
-                        : `gravi_analysis_${routeId}`;
-                    localStorage.setItem(storageKey, JSON.stringify({ v2: data.v2, results: data.results }));
-                    navigate(`/app/analysis/${routeId}`);
-                }
-
-            } else {
-                if (!driveUrl.includes('drive.google.com/drive/folders/')) {
-                    setErrorMsg("Please enter a valid Google Drive Folder link (must include /drive/folders/).");
-                    return;
-                }
-
-                const bulkAnalysis = await analyzeDriveFolder(driveUrl);
-
-                if (!bulkAnalysis || !bulkAnalysis.is_valid_source) {
-                    setErrorMsg(bulkAnalysis?.reasoning || 'Bulk analysis failed. Please check the folder link.');
-                    return;
-                }
-
-                const mockId = Math.random().toString(36).substring(7);
-                localStorage.setItem(`gravi_bulk_analysis_${mockId}`, JSON.stringify({
-                    sourceUrl: driveUrl,
-                    ...bulkAnalysis
-                }));
-                navigate(`/app/bulk-analysis/${mockId}`);
+            const token = localStorage.getItem('gravi_replicate_key');
+            if (!token) {
+                setErrorMsg("Please configure your Replicate API Key in Settings first.");
+                setLoading(false);
+                setShowSettings(true);
+                return;
             }
+
+            const isValidUrl = mapsUrl.includes('google.com/maps') ||
+                mapsUrl.includes('goo.gl/maps') ||
+                mapsUrl.includes('maps.app.goo.gl');
+
+            if (!isValidUrl) {
+                setErrorMsg("Please enter a valid Google Maps link.");
+                setLoading(false);
+                return;
+            }
+
+            // In V3 BYOK, since we do not have a backend, we need the image.
+            // If the user submits a maps URL, we would normally fetch the image using Places API via backend.
+            // Since we must be purely frontend, we might need a direct image upload or proxy.
+            // For now, we simulate taking the maps URL to the analysis page where the real extraction happens,
+            // or pass it along to DashboardV3 which handles it.
+
+            const routeId = Math.random().toString(36).substring(7);
+            localStorage.setItem(`gravi_v3_analysis_${routeId}`, JSON.stringify({
+                mapsUrl: mapsUrl,
+                status: 'pending'
+            }));
+
+            navigate(`/app/analysis-v3/${routeId}`);
+
         } catch (err) {
             console.error('handleAnalyze error:', err);
             setErrorMsg(`Something went wrong: ${err.message || 'Unknown error. Please try again.'}`);
@@ -85,68 +81,21 @@ export default function UploadPage() {
         <div style={{ position: 'relative', width: '100%', display: 'flex', justifyContent: 'center', height: '100%', flex: 1 }}>
             <BackgroundParticles />
 
+            {/* Top Right Settings Button */}
+            <div style={{ position: 'absolute', top: '1rem', right: '1rem', zIndex: 20 }}>
+                <button
+                    onClick={() => setShowSettings(true)}
+                    className="btn btn-glass"
+                    style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                    <Settings size={16} /> API Settings
+                </button>
+            </div>
+
             <div className="card fade-in" style={{ maxWidth: '620px', margin: '4rem auto', textAlign: 'center', position: 'relative', zIndex: 10 }}>
-                {/* Mode tabs */}
-                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginBottom: '1.5rem' }}>
-                    <button
-                        className={`btn ${mode === 'single' ? 'btn-primary' : 'btn-glass'}`}
-                        onClick={() => { setMode('single'); setErrorMsg(''); }}
-                    >
-                        <MapPin size={18} /> Single Store
-                    </button>
-                    <button
-                        className={`btn ${mode === 'bulk' ? 'btn-primary' : 'btn-glass'}`}
-                        onClick={() => { setMode('bulk'); setErrorMsg(''); setPipeline('standard'); }}
-                    >
-                        <FolderSync size={18} /> Bulk Process
-                    </button>
-                </div>
-
-                {/* Pipeline toggle (only for single mode) */}
-                {mode === 'single' && (
-                    <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', marginBottom: '1.75rem' }}>
-                        <button
-                            onClick={() => setPipeline('standard')}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 7, padding: '0.45rem 1.1rem',
-                                borderRadius: '0.65rem', border: `1px solid ${pipeline === 'standard' ? 'rgba(96,165,250,0.5)' : 'rgba(255,255,255,0.1)'}`,
-                                background: pipeline === 'standard' ? 'rgba(96,165,250,0.12)' : 'transparent',
-                                color: pipeline === 'standard' ? '#60a5fa' : 'rgba(255,255,255,0.35)',
-                                fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.2s',
-                            }}
-                        >
-                            <Zap size={13} /> Standard Analysis
-                        </button>
-                        <button
-                            onClick={() => setPipeline('deep')}
-                            style={{
-                                display: 'flex', alignItems: 'center', gap: 7, padding: '0.45rem 1.1rem',
-                                borderRadius: '0.65rem', border: `1px solid ${pipeline === 'deep' ? 'rgba(167,139,250,0.5)' : 'rgba(255,255,255,0.1)'}`,
-                                background: pipeline === 'deep' ? 'rgba(124,58,237,0.15)' : 'transparent',
-                                color: pipeline === 'deep' ? '#a78bfa' : 'rgba(255,255,255,0.35)',
-                                fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.2s',
-                            }}
-                        >
-                            <Layers size={13} /> Deep Vision (v2) ✦
-                        </button>
-                    </div>
-                )}
-
-                {pipeline === 'deep' && mode === 'single' && (
-                    <div style={{ marginBottom: '1.25rem', padding: '0.65rem 0.9rem', borderRadius: '0.75rem', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(167,139,250,0.2)', fontSize: '0.75rem', color: 'rgba(167,139,250,0.8)', textAlign: 'left', lineHeight: 1.5 }}>
-                        <strong style={{ color: '#a78bfa' }}>3-Layer Pipeline:</strong> YOLO object detection → OCR text extraction → Qwen 2.5-VL reasoning. Deeper analysis with brand source attribution. May take 30–90 seconds.
-                    </div>
-                )}
-
-                <h2 style={{ marginBottom: '0.5rem' }}>
-                    {mode === 'single' ? (pipeline === 'deep' ? 'Deep Vision Analysis' : 'Analyze Maps Listing') : 'Bulk Process Images'}
-                </h2>
+                <h2 style={{ marginBottom: '0.5rem' }}>Open-Vocabulary Retail Audit (V3)</h2>
                 <p style={{ color: 'var(--surface-300)', marginBottom: '2rem' }}>
-                    {mode === 'single'
-                        ? pipeline === 'deep'
-                            ? 'Run the 3-layer YOLO + Qwen-VL + OCR pipeline for maximum brand detection accuracy.'
-                            : 'Paste the Google Maps link of the grocery store. Our AI will automatically retrieve street views, photos, and extract intelligence.'
-                        : 'Paste a Google Drive Folder link containing images of stores. We will parse every image and generate a structured Excel export.'}
+                    Paste a Google Maps link. The V3 Architecture uses a single Vision-Language Model (InternVL2) for zero-shot detection.
                 </p>
 
                 {errorMsg && (
@@ -156,18 +105,16 @@ export default function UploadPage() {
                 )}
 
                 <div className="input-group" style={{ textAlign: 'left' }}>
-                    <label className="input-label">
-                        {mode === 'single' ? 'Google Maps URL' : 'Google Drive Folder URL'}
-                    </label>
+                    <label className="input-label">Google Maps URL</label>
                     <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
                         <LinkIcon size={18} color="var(--surface-300)" style={{ position: 'absolute', left: '1rem' }} />
                         <input
                             type="url"
                             className="input-field"
                             style={{ paddingLeft: '2.75rem' }}
-                            placeholder={mode === 'single' ? "https://maps.app.goo.gl/..." : "https://drive.google.com/drive/folders/..."}
-                            value={mode === 'single' ? mapsUrl : driveUrl}
-                            onChange={e => mode === 'single' ? setMapsUrl(e.target.value) : setDriveUrl(e.target.value)}
+                            placeholder="https://maps.app.goo.gl/..."
+                            value={mapsUrl}
+                            onChange={e => setMapsUrl(e.target.value)}
                         />
                     </div>
                 </div>
@@ -175,26 +122,70 @@ export default function UploadPage() {
                 <button
                     className="btn btn-primary"
                     onClick={handleAnalyze}
-                    disabled={loading || (mode === 'single' ? !mapsUrl : !driveUrl)}
-                    style={{
-                        width: '100%', marginTop: '1rem', padding: '1rem',
-                        background: pipeline === 'deep' && mode === 'single'
-                            ? 'linear-gradient(135deg, #7c3aed, #3b82f6)'
-                            : undefined,
-                    }}
+                    disabled={loading || !mapsUrl}
+                    style={{ width: '100%', marginTop: '1rem', padding: '1rem' }}
                 >
                     {loading ? (
-                        <>
-                            <Loader2 className="animate-spin" size={20} />
-                            {pipeline === 'deep' ? 'Running 3-Layer Pipeline...' : mode === 'single' ? 'Extracting & Analyzing...' : 'Processing Folder...'}
-                        </>
+                        <><Loader2 className="animate-spin" size={20} /> Starting Analysis...</>
                     ) : (
-                        pipeline === 'deep' && mode === 'single'
-                            ? <><Layers size={16} /> Run Deep Vision Analysis</>
-                            : mode === 'single' ? 'Analyze Store' : 'Start Bulk Analysis'
+                        <><MapPin size={16} /> Analyze Store</>
                     )}
                 </button>
             </div>
+
+            {/* Settings Modal */}
+            {showSettings && (
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: 'rgba(0,0,0,0.7)', zIndex: 100,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backdropFilter: 'blur(4px)'
+                }}>
+                    <div className="card fade-in" style={{ width: '100%', maxWidth: '500px', textAlign: 'left' }}>
+                        <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            <Settings size={20} /> Bring Your Own Key (BYOK)
+                        </h3>
+
+                        <div className="input-group" style={{ marginBottom: '1rem' }}>
+                            <label className="input-label">Replicate API Key (InternVL2) <span style={{ color: 'red' }}>*</span></label>
+                            <input
+                                type="password"
+                                className="input-field"
+                                value={replicateKey}
+                                onChange={(e) => setReplicateKey(e.target.value)}
+                                placeholder="r8_..."
+                            />
+                        </div>
+
+                        <div className="input-group" style={{ marginBottom: '1rem' }}>
+                            <label className="input-label">Supabase URL (Optional for DB sync)</label>
+                            <input
+                                type="url"
+                                className="input-field"
+                                value={supabaseUrl}
+                                onChange={(e) => setSupabaseUrl(e.target.value)}
+                                placeholder="https://xyz.supabase.co"
+                            />
+                        </div>
+
+                        <div className="input-group" style={{ marginBottom: '2rem' }}>
+                            <label className="input-label">Supabase Anon Key (Optional)</label>
+                            <input
+                                type="password"
+                                className="input-field"
+                                value={supabaseKey}
+                                onChange={(e) => setSupabaseKey(e.target.value)}
+                                placeholder="eyJh..."
+                            />
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                            <button className="btn btn-glass" onClick={() => setShowSettings(false)}>Cancel</button>
+                            <button className="btn btn-primary" onClick={saveSettings}>Save Settings</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

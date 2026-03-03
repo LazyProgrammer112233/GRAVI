@@ -3,6 +3,7 @@ import { Routes, Route, useNavigate, Navigate } from 'react-router-dom';
 import UploadPage from './pages/UploadPage';
 import AnalysisDashboard from './pages/AnalysisDashboard';
 import AnalysisDashboardV2 from './pages/AnalysisDashboardV2';
+import AnalysisDashboardV3 from './pages/AnalysisDashboardV3';
 import AnalysisDashboardV4 from './pages/AnalysisDashboardV4';
 import AIAnalysisPage from './pages/AIAnalysisPage';
 import LandingPage from './pages/LandingPage';
@@ -162,10 +163,10 @@ function App() {
         }
       />
       <Route
-        path="/app/analysis-v4/:id"
+        path="/app/analysis-v3/:id"
         element={
           <ProtectedRoute>
-            <AppLayout><AnalysisDashboardV4 /></AppLayout>
+            <AppLayout><AnalysisDashboardV3 /></AppLayout>
           </ProtectedRoute>
         }
       />
