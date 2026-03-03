@@ -12,21 +12,21 @@ export default function UploadPage() {
 
     // Settings modal state
     const [showSettings, setShowSettings] = useState(false);
-    const [replicateKey, setReplicateKey] = useState('');
+    const [geminiKey, setGeminiKey] = useState('');
     const [supabaseKey, setSupabaseKey] = useState('');
     const [supabaseUrl, setSupabaseUrl] = useState('');
 
     useEffect(() => {
-        const storedReplicate = localStorage.getItem('gravi_replicate_key') || '';
+        const storedGemini = localStorage.getItem('gravi_gemini_key') || '';
         const storedSupabaseKey = localStorage.getItem('gravi_supabase_key') || '';
         const storedSupabaseUrl = localStorage.getItem('gravi_supabase_url') || '';
-        setReplicateKey(storedReplicate);
+        setGeminiKey(storedGemini);
         setSupabaseKey(storedSupabaseKey);
         setSupabaseUrl(storedSupabaseUrl);
     }, []);
 
     const saveSettings = () => {
-        localStorage.setItem('gravi_replicate_key', replicateKey.trim());
+        localStorage.setItem('gravi_gemini_key', geminiKey.trim());
         localStorage.setItem('gravi_supabase_key', supabaseKey.trim());
         localStorage.setItem('gravi_supabase_url', supabaseUrl.trim());
         setShowSettings(false);
@@ -37,9 +37,9 @@ export default function UploadPage() {
         setLoading(true);
 
         try {
-            const token = localStorage.getItem('gravi_replicate_key');
+            const token = localStorage.getItem('gravi_gemini_key');
             if (!token) {
-                setErrorMsg("Please configure your Replicate API Key in Settings first.");
+                setErrorMsg("Please configure your Google Gemini API Key in Settings first.");
                 setLoading(false);
                 setShowSettings(true);
                 return;

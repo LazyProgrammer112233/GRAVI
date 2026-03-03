@@ -57,14 +57,14 @@ const AnalysisDashboardV3 = () => {
             return;
         }
 
-        let replicateKey = localStorage.getItem('gravi_replicate_key');
-        if (!replicateKey) {
-            setErrorMsg("Replicate API Key is missing. Please configure it in the Settings (Top Right).");
+        let geminiKey = localStorage.getItem('gravi_gemini_key');
+        if (!geminiKey) {
+            setErrorMsg("Gemini API Key is missing. Please configure it in the Settings (Top Right).");
             navigate('/app');
             return;
         }
 
-        replicateKey = replicateKey.trim();
+        geminiKey = geminiKey.trim();
         if (!replicateKey.startsWith('r8_')) {
             setErrorMsg("Invalid Replicate API Key. It should start with 'r8_'. Please verify your BYOK settings.");
             return;

@@ -1,5 +1,6 @@
-export const REPLICATE_API_URL = "/api/replicate/v1/predictions";
+export const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent";
 
+// Updated prompt to match Gemini's expectations
 export const V3_PROMPT = `You are a retail audit engine.
 Analyze the image and identify ONLY clearly visible FMCG products.
 
@@ -12,7 +13,7 @@ Rules:
 - Output STRICT JSON.
 - No explanations.
 
-Return format:
+Return format exactly as:
 {
   "products": [
     {
@@ -25,58 +26,63 @@ Return format:
   ]
 }`;
 
-export async function fetchInternVL2Analysis(base64Image, replicateToken) {
-    if (!replicateToken) {
-        throw new Error("Replicate API token is required for Bring-Your-Own-Key configuration.");
+// Keeping the function name the same so we don't break Dashboard imports, 
+// but it now uses Gemini API natively.
+export async function fetchInternVL2Analysis(base64Image, geminiKey) {
+    if (!geminiKey) {
+        throw new Error("Gemini API token is required for Bring-Your-Own-Key configuration.");
+    }
+
+    geminiKey = geminiKey.trim();
+
+    // Strip the data URL prefix (e.g., "data:image/jpeg;base64,")
+    const base64Data = base64Image.split(',')[1];
+
+    // Attempt to guess mime type from the prefix or default to jpeg
+    let mimeType = "image/jpeg";
+    const prefixMatch = base64Image.match(/^data:(image\/[a-zA-Z+.-]+);base64,/);
+    if (prefixMatch) {
+        mimeType = prefixMatch[1];
     }
 
     const payload = {
-        version: "80537f9eead1a5bfa72d5ac6ea6414379be41d4d4f6679fd776e9535d1eb58bb",
-        input: {
-            image: base64Image,
-            prompt: V3_PROMPT,
-            temperature: 0.1, // Deterministic
+        contents: [{
+            parts: [
+                { text: V3_PROMPT },
+                {
+                    inlineData: {
+                        mimeType: mimeType,
+                        data: base64Data
+                    }
+                }
+            ]
+        }],
+        generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json"
         }
     };
 
-    const response = await fetch(REPLICATE_API_URL, {
+    const response = await fetch(`${GEMINI_API_URL}?key=${geminiKey}`, {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${replicateToken}`,
-            "Content-Type": "application/json",
-            "Prefer": "wait" // Replicate prefers 'wait' for synchronous response if supported, otherwise polling
+            "Content-Type": "application/json"
         },
         body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
-        throw new Error(`Replicate API HTTP Error: ${response.status} - ${await response.text()}`);
+        const errText = await response.text();
+        throw new Error(`Gemini API HTTP Error: ${response.status} - ${errText}`);
     }
 
-    let prediction = await response.json();
+    const data = await response.json();
 
-    // Poll if prediction is not finished immediately
-    while (prediction.status !== "succeeded" && prediction.status !== "failed") {
-        await new Promise(r => setTimeout(r, 2000));
-
-        // Proxy the polling URL as well to avoid CORS
-        const pollUrl = prediction.urls.get.replace('https://api.replicate.com', '/api/replicate');
-
-        const pollResponse = await fetch(pollUrl, {
-            headers: {
-                "Authorization": `Bearer ${replicateToken}`,
-                "Content-Type": "application/json"
-            }
-        });
-        prediction = await pollResponse.json();
+    if (!data.candidates || data.candidates.length === 0) {
+        throw new Error("Gemini returned no candidates.");
     }
 
-    if (prediction.status === "failed") {
-        throw new Error("Prediction failed: " + prediction.error);
-    }
-
-    // Attempt parsing JSON
-    let outputStr = Array.isArray(prediction.output) ? prediction.output.join("") : prediction.output;
+    let outputStr = data.candidates[0].content.parts[0].text;
     outputStr = outputStr.replace(/```json/gi, '').replace(/```/g, '').trim();
 
     try {
