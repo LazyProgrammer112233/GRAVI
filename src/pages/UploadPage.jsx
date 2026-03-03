@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link as LinkIcon, Loader2, MapPin, Settings } from 'lucide-react';
 import BackgroundParticles from '../components/BackgroundParticles';
-import { fetchInternVL2Analysis } from '../lib/inference';
 
 export default function UploadPage() {
     const navigate = useNavigate();
@@ -12,21 +11,17 @@ export default function UploadPage() {
 
     // Settings modal state
     const [showSettings, setShowSettings] = useState(false);
-    const [geminiKey, setGeminiKey] = useState('');
     const [supabaseKey, setSupabaseKey] = useState('');
     const [supabaseUrl, setSupabaseUrl] = useState('');
 
     useEffect(() => {
-        const storedGemini = localStorage.getItem('gravi_gemini_key') || '';
         const storedSupabaseKey = localStorage.getItem('gravi_supabase_key') || '';
         const storedSupabaseUrl = localStorage.getItem('gravi_supabase_url') || '';
-        setGeminiKey(storedGemini);
         setSupabaseKey(storedSupabaseKey);
         setSupabaseUrl(storedSupabaseUrl);
     }, []);
 
     const saveSettings = () => {
-        localStorage.setItem('gravi_gemini_key', geminiKey.trim());
         localStorage.setItem('gravi_supabase_key', supabaseKey.trim());
         localStorage.setItem('gravi_supabase_url', supabaseUrl.trim());
         setShowSettings(false);
@@ -37,13 +32,8 @@ export default function UploadPage() {
         setLoading(true);
 
         try {
-            const token = localStorage.getItem('gravi_gemini_key');
-            if (!token) {
-                setErrorMsg("Please configure your Google Gemini API Key in Settings first.");
-                setLoading(false);
-                setShowSettings(true);
-                return;
-            }
+            const token = localStorage.getItem('gravi_supabase_key');
+            const url = localStorage.getItem('gravi_supabase_url');
 
             const isValidUrl = mapsUrl.includes('google.com/maps') ||
                 mapsUrl.includes('goo.gl/maps') ||
@@ -54,12 +44,6 @@ export default function UploadPage() {
                 setLoading(false);
                 return;
             }
-
-            // In V3 BYOK, since we do not have a backend, we need the image.
-            // If the user submits a maps URL, we would normally fetch the image using Places API via backend.
-            // Since we must be purely frontend, we might need a direct image upload or proxy.
-            // For now, we simulate taking the maps URL to the analysis page where the real extraction happens,
-            // or pass it along to DashboardV3 which handles it.
 
             // Navigate to Dashboard V4 for inference architecture
             const routeId = Math.random().toString(36).substring(7);
@@ -96,7 +80,7 @@ export default function UploadPage() {
             <div className="card fade-in" style={{ maxWidth: '620px', margin: '4rem auto', textAlign: 'center', position: 'relative', zIndex: 10 }}>
                 <h2 style={{ marginBottom: '0.5rem' }}>Open-Vocabulary Retail Audit (V4)</h2>
                 <p style={{ color: 'var(--surface-300)', marginBottom: '2rem' }}>
-                    Paste a Google Maps link. The V4 Architecture uses Llama Vision Models for zero-shot online execution.
+                    Paste a Google Maps link. The V4 Architecture uses Llama Vision Models & Supabase for zero-shot execution.
                 </p>
 
                 {errorMsg && (
@@ -144,22 +128,11 @@ export default function UploadPage() {
                 }}>
                     <div className="card fade-in" style={{ width: '100%', maxWidth: '500px', textAlign: 'left' }}>
                         <h3 style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Settings size={20} /> Bring Your Own Key (BYOK)
+                            <Settings size={20} /> Supabase Settings
                         </h3>
 
                         <div className="input-group" style={{ marginBottom: '1rem' }}>
-                            <label className="input-label">Replicate API Key (InternVL2) <span style={{ color: 'red' }}>*</span></label>
-                            <input
-                                type="password"
-                                className="input-field"
-                                value={replicateKey}
-                                onChange={(e) => setReplicateKey(e.target.value)}
-                                placeholder="r8_..."
-                            />
-                        </div>
-
-                        <div className="input-group" style={{ marginBottom: '1rem' }}>
-                            <label className="input-label">Supabase URL (Optional for DB sync)</label>
+                            <label className="input-label">Supabase URL</label>
                             <input
                                 type="url"
                                 className="input-field"
@@ -170,7 +143,7 @@ export default function UploadPage() {
                         </div>
 
                         <div className="input-group" style={{ marginBottom: '2rem' }}>
-                            <label className="input-label">Supabase Anon Key (Optional)</label>
+                            <label className="input-label">Supabase Anon Key</label>
                             <input
                                 type="password"
                                 className="input-field"
