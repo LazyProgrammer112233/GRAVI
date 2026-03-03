@@ -65,8 +65,8 @@ const AnalysisDashboardV3 = () => {
         }
 
         geminiKey = geminiKey.trim();
-        if (!replicateKey.startsWith('r8_')) {
-            setErrorMsg("Invalid Replicate API Key. It should start with 'r8_'. Please verify your BYOK settings.");
+        if (!geminiKey.startsWith('AI')) {
+            setErrorMsg("Invalid Gemini API Key. It should start with 'AI'. Please verify your BYOK settings.");
             return;
         }
 
@@ -75,8 +75,8 @@ const AnalysisDashboardV3 = () => {
             setErrorMsg('');
 
             // Step 1: VLM Inference
-            setStep('Running LLaVA-13B Vision Analysis...');
-            const vlmResult = await fetchInternVL2Analysis(selectedImage, replicateKey);
+            setStep('Running Gemini-1.5-Flash Vision Analysis...');
+            const vlmResult = await fetchInternVL2Analysis(selectedImage, geminiKey);
 
             if (!vlmResult.products || vlmResult.products.length === 0) {
                 throw new Error("No products detected by the AI model. Try a clearer image.");
