@@ -1,4 +1,4 @@
-export const REPLICATE_API_URL = "/api/replicate/v1/models/yorickvp/llava-13b/predictions";
+export const REPLICATE_API_URL = "/api/replicate/v1/predictions";
 
 export const V3_PROMPT = `You are a retail audit engine.
 Analyze the image and identify ONLY clearly visible FMCG products.
@@ -31,6 +31,7 @@ export async function fetchInternVL2Analysis(base64Image, replicateToken) {
     }
 
     const payload = {
+        version: "80537f9eead1a5bfa72d5ac6ea6414379be41d4d4f6679fd776e9535d1eb58bb",
         input: {
             image: base64Image,
             prompt: V3_PROMPT,
