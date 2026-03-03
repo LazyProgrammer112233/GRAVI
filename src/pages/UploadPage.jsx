@@ -26,9 +26,9 @@ export default function UploadPage() {
     }, []);
 
     const saveSettings = () => {
-        localStorage.setItem('gravi_replicate_key', replicateKey);
-        localStorage.setItem('gravi_supabase_key', supabaseKey);
-        localStorage.setItem('gravi_supabase_url', supabaseUrl);
+        localStorage.setItem('gravi_replicate_key', replicateKey.trim());
+        localStorage.setItem('gravi_supabase_key', supabaseKey.trim());
+        localStorage.setItem('gravi_supabase_url', supabaseUrl.trim());
         setShowSettings(false);
     };
 

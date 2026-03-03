@@ -57,10 +57,16 @@ const AnalysisDashboardV3 = () => {
             return;
         }
 
-        const replicateKey = localStorage.getItem('gravi_replicate_key');
+        let replicateKey = localStorage.getItem('gravi_replicate_key');
         if (!replicateKey) {
-            setErrorMsg("Replicate API Key is missing. Please configure it in the main page settings.");
+            setErrorMsg("Replicate API Key is missing. Please configure it in the Settings (Top Right).");
             navigate('/app');
+            return;
+        }
+
+        replicateKey = replicateKey.trim();
+        if (!replicateKey.startsWith('r8_')) {
+            setErrorMsg("Invalid Replicate API Key. It should start with 'r8_'. Please verify your BYOK settings.");
             return;
         }
 
