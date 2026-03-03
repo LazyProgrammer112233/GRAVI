@@ -149,12 +149,12 @@ export async function analyzeImageV2(gmapsUrl) {
         throw new Error(data.reason || 'V2 analysis failed. Please try again.');
     }
 
-    // Successful v2_3layer response
-    if (data && data.v2_3layer === true && data.results) {
+    // Successful v2_3layer or v4_gemini response
+    if (data && (data.v2_3layer === true || data.v4_gemini === true) && data.results) {
         if (data.results.verification_status === 'FAILED') {
             throw new Error(`V2 Verification failed: ${data.results.reason || 'Store could not be identified.'}`);
         }
-        return { v2_3layer: true, results: data.results };
+        return { is_v2: true, results: data.results };
     }
 
     throw new Error(data?.reason || data?.error || `Unexpected V2 response: ${JSON.stringify(data)}`);

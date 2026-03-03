@@ -35,8 +35,8 @@ export default function UploadPage() {
                         return;
                     }
                     const routeId = data.results.analysis_session_id || Math.random().toString(36).substring(7);
-                    localStorage.setItem(`gravi_v2_3layer_analysis_${routeId}`, JSON.stringify({ v2_3layer: true, results: data.results }));
-                    navigate(`/app/analysis-v2/${routeId}`);
+                    localStorage.setItem(`gravi_v4_analysis_${routeId}`, JSON.stringify({ v4_gemini: true, results: data.results }));
+                    navigate(`/app/analysis-v4/${routeId}`);
                 } else {
                     const data = await analyzeImage(mapsUrl);
                     if (!data || !data.results) {

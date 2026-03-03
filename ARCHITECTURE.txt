@@ -1,0 +1,170 @@
+GRAVI — Vision Pipeline Architecture
+Version: v3.1 (Groq-Native, No External Paid APIs)
+Last Updated: 2026-03-03
+=========================================
+
+OVERVIEW
+--------
+GRAVI analyzes a Google Maps store URL and returns a structured breakdown
+of FMCG brands detected on retail shelves at that location.
+
+Pipeline entry: POST /functions/v1/analyze-maps-url-v2
+Input:          { "mapsUrl": "<google maps URL>" }
+Output:         JSON with brands, product counts, shelf classification
+
+
+PIPELINE STAGES (In Order)
+--------------------------
+
+[INPUT]
+  - User submits a Google Maps URL (place URL, short URL, or query string).
+  - The function resolves the URL → extracts the place name and GPS coordinates.
+  - Google Places API (findplacefromtext) → fetches the place_id.
+  - Google Places Details API → fetches name, address, rating, reviews, and up to 6 photo references.
+  - All 6 photos are fetched in PARALLEL and stored as base64 strings.
+
+
+PHASE 1 — STRICT INTERIOR VALIDATION (Gatekeeper)
+--------------------------------------------------
+  Model: Groq Vision (meta-llama/llama-4-scout-17b-16e-instruct)
+  Mode:  Parallel (all 6 images classified simultaneously)
+  
+  Purpose: Reject exterior / signboard / irrelevant images before any detection.
+
+  Criteria for PASS:
+    - image_type = "INTERIOR_SHELVES_VISIBLE"
+    - indoor_confidence >= 0.80
+    - Shelves cover >= 30% of image
+    - Packaged goods visible on racks
+
+  Criteria for REJECT:
+    - Any sky, road, vehicles, building facade, or store hoarding visible
+    - Outdoor lighting dominant
+    - No structured rack/shelf structure
+
+  Output:
+    - Images sorted by estimated_shelf_count (descending)
+    - Top 2 valid images selected for further processing
+    - If 0 valid images → return REJECTED_EXTERIOR error. Stop.
+
+
+PHASE 2 — DETERMINISTIC PRODUCT DETECTION
+------------------------------------------
+  Model: Groq Vision (meta-llama/llama-4-scout-17b-16e-instruct)
+  Mode:  Parallel across top 2 valid images
+
+  Purpose: Identify every individual packaged product visible on shelves.
+
+  Returns per product:
+    - id, label (e.g. "biscuit pack"), bbox_percent [left%, top%, right%, bottom%]
+    - confidence score
+    - brand_text_visible (if text on packaging is clearly readable at this stage)
+
+  Hard Rules:
+    - confidence >= 0.50 to include a product region
+    - shelf_detected must be true
+    - Only products ON shelves/racks are listed
+
+  Gating: If total products across all images < 10 → return INSUFFICIENT_PRODUCTS error. Stop.
+
+
+PHASE 3 — DETERMINISTIC OCR (Per Product Region)
+-------------------------------------------------
+  Model: Groq Vision (meta-llama/llama-4-scout-17b-16e-instruct)
+  Mode:  Sequential per image (after Phase 2 completes)
+
+  Purpose: Read brand text printed ON PRODUCT PACKAGING ONLY.
+
+  Input: The image + the list of detected product regions from Phase 2.
+  
+  Strict Rules:
+    - Only extract text from product packaging
+    - FORBIDDEN: store signboards, refrigerator brand labels, background posters,
+                 outdoor banners, text not on a physical product
+    - confidence >= 0.75 to include an extraction
+    - Normalized against known Indian FMCG categories for reference only
+      (brands must be READABLE in image — not inferred from prior knowledge)
+
+
+PHASE 4 — BRAND AGGREGATION & DEDUPLICATION (Blind LLM)
+---------------------------------------------------------
+  Model: Groq text-only (llama-3.3-70b-versatile)
+  Mode:  Single call, receives NO image data
+
+  Purpose: Deduplicate and normalize raw extracted brand strings.
+
+  Input:  Raw array of extracted brand strings from Phases 2 + 3.
+  Output: Deduplicated, normalized brand list with confidence scores.
+
+  Hard Rules:
+    - LLM has NO image access
+    - Can only process strings it receives in the JSON input
+    - Must NOT guess, infer, or expand brands using prior knowledge
+    - Only responsibility: normalize spelling (e.g. "coca cola" → "Coca Cola")
+
+  Gating: If unique_brands_detected < 5 → return INSUFFICIENT_BRAND_DIVERSITY error. Stop.
+
+
+FINAL OUTPUT (on success)
+--------------------------
+  {
+    "success": true,
+    "results": {
+      "verification_status": "VERIFIED",
+      "pipeline_version": "v3.1-Groq-Deterministic",
+      "image_type": "INTERIOR_SHELF",
+      "total_images_analyzed": 2,
+      "total_product_masks": <count>,
+      "total_products_detected": <count>,
+      "unique_brands_detected": <count>,
+      "brands": [
+        {
+          "brand_name": "Coca Cola",
+          "detection_source": "vision_ocr",
+          "confidence": 0.91,
+          "category": "Beverages",
+          "product_mask_id": 1
+        }
+      ],
+      "place_name": "...",
+      "rating": 4.2,
+      "classification_summary": [...],
+      "detection_summary": [...]
+    }
+  }
+
+
+ERROR RESPONSES
+---------------
+  REJECTED_EXTERIOR            — All fetched images are outdoor/signage shots.
+  INSUFFICIENT_PRODUCTS        — Fewer than 10 products found on any shelf.
+  INSUFFICIENT_BRAND_DIVERSITY — Fewer than 5 unique FMCG brands detected.
+  FAILED                       — General system error (Places API key missing, etc.)
+
+
+EXTERNAL APIS USED
+------------------
+  1. Google Maps Places API    → Store lookup + photo fetching (uses GOOGLE_PLACES_API_KEY)
+  2. Groq API (Vision)         → Phases 1, 2, 3 — image analysis (uses GROQ_API_KEY)
+  3. Groq API (Text)           → Phase 4 — brand deduplication (uses GROQ_API_KEY)
+
+  NO paid per-call APIs (Replicate removed — account had insufficient credits).
+
+
+DEPLOYMENT
+----------
+  Platform:  Supabase Edge Functions (Deno runtime)
+  Function:  analyze-maps-url-v2
+  Timeout:   ~25 seconds typical / 150 second hard limit
+  Deploy:    npx supabase functions deploy analyze-maps-url-v2 --project-ref <ref> --no-verify-jwt
+
+
+TIMEOUT BUDGET (approximate)
+-----------------------------
+  Photo fetch (6 images, parallel):     ~3s
+  Phase 1 classification (parallel):    ~5s
+  Phase 2 product detection (parallel): ~8s
+  Phase 3 OCR (per image):              ~8s
+  Phase 4 aggregation (text-only):      ~3s
+  -------------------------------------------
+  Total:                                ~27s  (well within 150s limit)
