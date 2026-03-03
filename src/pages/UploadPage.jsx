@@ -61,13 +61,14 @@ export default function UploadPage() {
             // For now, we simulate taking the maps URL to the analysis page where the real extraction happens,
             // or pass it along to DashboardV3 which handles it.
 
+            // Navigate to Dashboard V4 for inference architecture
             const routeId = Math.random().toString(36).substring(7);
-            localStorage.setItem(`gravi_v3_analysis_${routeId}`, JSON.stringify({
+            localStorage.setItem(`gravi_v4_analysis_${routeId}`, JSON.stringify({
                 mapsUrl: mapsUrl,
                 status: 'pending'
             }));
 
-            navigate(`/app/analysis-v3/${routeId}`);
+            navigate(`/app/analysis-v4/${routeId}`);
 
         } catch (err) {
             console.error('handleAnalyze error:', err);
@@ -93,9 +94,9 @@ export default function UploadPage() {
             </div>
 
             <div className="card fade-in" style={{ maxWidth: '620px', margin: '4rem auto', textAlign: 'center', position: 'relative', zIndex: 10 }}>
-                <h2 style={{ marginBottom: '0.5rem' }}>Open-Vocabulary Retail Audit (V3)</h2>
+                <h2 style={{ marginBottom: '0.5rem' }}>Open-Vocabulary Retail Audit (V4)</h2>
                 <p style={{ color: 'var(--surface-300)', marginBottom: '2rem' }}>
-                    Paste a Google Maps link. The V3 Architecture uses a single Vision-Language Model (InternVL2) for zero-shot detection.
+                    Paste a Google Maps link. The V4 Architecture uses Llama Vision Models for zero-shot online execution.
                 </p>
 
                 {errorMsg && (

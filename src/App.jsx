@@ -170,6 +170,14 @@ function App() {
           </ProtectedRoute>
         }
       />
+      <Route
+        path="/app/analysis-v4/:id"
+        element={
+          <ProtectedRoute>
+            <AppLayout><AnalysisDashboardV4 /></AppLayout>
+          </ProtectedRoute>
+        }
+      />
     </Routes>
   );
 }
