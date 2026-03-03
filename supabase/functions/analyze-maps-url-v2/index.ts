@@ -199,15 +199,72 @@ async function denseAudit(b64: string, idx: number, geminiKey: string): Promise<
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
+// BACKWARD COMPATIBILITY: Sentiment & Authenticity Scoring
+// ──────────────────────────────────────────────────────────────────────────────
+function analyzeReviewSentiment(reviews: any[]): {
+    positive_pct: number; neutral_pct: number; negative_pct: number;
+    sentiment_label: string; sample_themes: string[];
+} {
+    if (!reviews || reviews.length === 0) {
+        return { positive_pct: 0, neutral_pct: 0, negative_pct: 0, sentiment_label: "unknown", sample_themes: [] };
+    }
+    const positive = reviews.filter(r => r.rating >= 4).length;
+    const negative = reviews.filter(r => r.rating <= 2).length;
+    const neutral = reviews.length - positive - negative;
+    const total = reviews.length;
+
+    const positivePct = Math.round((positive / total) * 100);
+    const negativePct = Math.round((negative / total) * 100);
+    const neutralPct = 100 - positivePct - negativePct;
+
+    const label = positivePct >= 60 ? "Mostly Positive"
+        : negativePct >= 40 ? "Mostly Negative" : "Mixed";
+
+    return {
+        positive_pct: positivePct,
+        neutral_pct: neutralPct,
+        negative_pct: negativePct,
+        sentiment_label: label,
+        sample_themes: [],
+    };
+}
+
+function computeAuthenticityScore(
+    avgRating: number,
+    reviewCount: number,
+    sentiment: { positive_pct: number },
+    imagesCount: number,
+    shelfQualityScore: number,
+    uniqueBrandCount: number,
+): number {
+    const sentimentScore = Math.round((sentiment.positive_pct / 100) * 25);
+    const ratingScore = Math.round((Math.min(avgRating, 5) / 5) * 20);
+    const imageScore = imagesCount >= 4 ? 15 : imagesCount >= 2 ? 10 : 5;
+    const brandScore = uniqueBrandCount >= 8 ? 25 : uniqueBrandCount >= 4 ? 18 : uniqueBrandCount >= 2 ? 10 : 5;
+    const shelfScore = Math.round((Math.min(shelfQualityScore, 100) / 100) * 15);
+
+    return Math.min(100, sentimentScore + ratingScore + imageScore + brandScore + shelfScore);
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 // PHASE 3 — Groq Aggregation (TEXT ONLY — blind to image)
 // ──────────────────────────────────────────────────────────────────────────────
-async function aggregateBrands(allDetections: Detection[], groqKey: string): Promise<{
+async function aggregateBrands(allDetections: Detection[], groqKey: string, storeMeta: any): Promise<{
     total_products_detected: number;
-    unique_brands_list: any[];
+    unique_brands_list: string[];
+    brand_distribution: any;
     store_footprint_index: string;
+    ai_insights: string[];
+    shelf_quality_score: number;
+    category_presence: any;
+    missing_categories: string[];
 }> {
     if (allDetections.length === 0) {
-        return { total_products_detected: 0, unique_brands_list: [], store_footprint_index: "Low" };
+        return {
+            total_products_detected: 0, unique_brands_list: [], brand_distribution: {},
+            store_footprint_index: "Low", ai_insights: ["No distinct FMCG products detected on shelves."],
+            shelf_quality_score: 10, category_presence: {}, missing_categories: []
+        };
     }
 
     const rawInput = allDetections.map(d => ({
@@ -216,29 +273,37 @@ async function aggregateBrands(allDetections: Detection[], groqKey: string): Pro
         confidence: d.ocr_confidence,
     }));
 
-    const prompt = `You are the GRAVI Aggregation Layer. You receive raw JSON from multiple vision passes.
-Your job: clean, deduplicate, and produce a final retail audit report.
+    const prompt = `You are the GRAVI Aggregation Layer. You receive raw JSON structured visual detections from a retail environment.
+Your job: clean, deduplicate, and produce a final retail AI insights audit.
 
-Input Data:
+Store Data:
+Name: ${storeMeta.name}
+Review Rating: ${storeMeta.rating}
+
+Input Vision Data:
 ${JSON.stringify(rawInput)}
 
 Processing Rules:
-1. Normalization: Convert brand variations to standard name (e.g., "COKE", "CocaCola" → "Coca Cola"; "Britania" → "Britannia")
-2. Deduplication: Same brand = one entry, multiple sightings = increase product_count
-3. Validation: Discard common nouns ("Sugar", "Milk") unless confidence >= 0.85
-4. No Hallucination: You have NO image access. Work ONLY with provided text.
+1. Normalization: Convert brand variations strictly. Return unique brands as a strict flat array of strings in unique_brands_list.
+2. brand_distribution: Build an object mapping the brand to its details including total product sightings count, category, and source "YOLO+OCR".
+3. Provide 3-4 highly professional factual AI insights regarding merchandising, shelf stocking, and brand representation in "ai_insights".
 
 Return ONLY valid JSON:
 {
   "total_products_detected": 28,
-  "unique_brands_list": [
-    {"brand_name": "Parle-G", "product_count": 5, "category": "Snacks"},
-    {"brand_name": "Britannia", "product_count": 3, "category": "Bakery"}
+  "unique_brands_list": ["Parle-G", "Britannia"],
+  "brand_distribution": {
+    "Parle-G": { "count": 5, "category": "Snacks", "source": "YOLO+OCR", "confidence": 0.95 }
+  },
+  "store_footprint_index": "High",
+  "ai_insights": [
+    "Parle-G commands the highest shelf density in the Snacks category, occupying 5 out of 28 total visible product facings.",
+    "The overall brand fragmentation is low, suggesting a highly organized distributor-led merchandising strategy."
   ],
-  "store_footprint_index": "High"
-}
-
-store_footprint_index: "Low" (<10 total products), "Medium" (10-25), "High" (>25)`;
+  "shelf_quality_score": 85,
+  "category_presence": { "Snacks": true, "Beverages": false },
+  "missing_categories": ["Beverages", "Dairy"]
+}`;
 
     try {
         const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -256,7 +321,12 @@ store_footprint_index: "Low" (<10 total products), "Medium" (10-25), "High" (>25
         return {
             total_products_detected: parsed.total_products_detected || allDetections.length,
             unique_brands_list: Array.isArray(parsed.unique_brands_list) ? parsed.unique_brands_list : [],
+            brand_distribution: parsed.brand_distribution || {},
             store_footprint_index: parsed.store_footprint_index || "Low",
+            ai_insights: parsed.ai_insights || [],
+            shelf_quality_score: parsed.shelf_quality_score || 50,
+            category_presence: parsed.category_presence || {},
+            missing_categories: parsed.missing_categories || []
         };
     } catch {
         // Fallback: manual dedup
@@ -266,13 +336,21 @@ store_footprint_index: "Low" (<10 total products), "Medium" (10-25), "High" (>25
             if (!countMap[key]) countMap[key] = { count: 0, category: d.category_guess };
             countMap[key].count++;
         }
-        const unique_brands_list = Object.entries(countMap).map(([k, v]) => ({
-            brand_name: k.charAt(0).toUpperCase() + k.slice(1), product_count: v.count, category: v.category
-        }));
+        const unique_brands_list = Object.keys(countMap).map(k => k.charAt(0).toUpperCase() + k.slice(1));
+        const distribution: any = {};
+        for (const k of unique_brands_list) {
+            const low = k.toLowerCase();
+            distribution[k] = { count: countMap[low]?.count || 1, category: countMap[low]?.category || "Unknown", source: "YOLO+OCR", confidence: 0.9 };
+        }
         return {
             total_products_detected: allDetections.length,
             unique_brands_list,
+            brand_distribution: distribution,
             store_footprint_index: allDetections.length > 25 ? "High" : allDetections.length > 10 ? "Medium" : "Low",
+            ai_insights: ["Fallback parsing: Detailed AI insights could not be securely generated for this image set due to text timeout."],
+            shelf_quality_score: 55,
+            category_presence: {},
+            missing_categories: []
         };
     }
 }
@@ -332,6 +410,18 @@ serve(async (req: Request) => {
         if (dd.status !== 'OK') return failedResponse(`Place details failed: ${dd.status}`, sid);
         const place = dd.result;
         const placeName = place.name;
+        const avgRating: number = place.rating || 0;
+        const reviewCount: number = place.user_ratings_total || 0;
+
+        const recentReviews = (place.reviews || [])
+            .sort((a: any, b: any) => b.time - a.time)
+            .slice(0, 10)
+            .map((r: any) => ({
+                author: r.author_name || "Anonymous",
+                rating: r.rating || 0,
+                text: r.text || "",
+                date: new Date(r.time * 1000).toISOString().split('T')[0],
+            }));
 
         // Fetch up to 10 photos in parallel
         const photoRefs = (place.photos || []).slice(0, 10).map((p: any) => p.photo_reference);
@@ -402,25 +492,68 @@ serve(async (req: Request) => {
         }
 
         // ── PHASE 3: Groq Aggregation (text-only) ────────────────────────────
-        const aggregated = await aggregateBrands(allDetections, groqKey);
+        const aggregated = await aggregateBrands(allDetections, groqKey, { name: placeName, rating: avgRating });
         console.log(`[${sid}] P3: ${aggregated.unique_brands_list.length} unique brands after dedup`);
 
-
+        // ── Data computations ────────────────────────────────────────────────
+        const sentiment = analyzeReviewSentiment(recentReviews);
+        const authenticityScore = computeAuthenticityScore(
+            avgRating, reviewCount, sentiment,
+            imagesWithDetections, aggregated.shelf_quality_score, aggregated.unique_brands_list.length
+        );
 
         // ── Build final response ─────────────────────────────────────────────
         const finalResponse = {
             analysis_session_id: sid,
             verification_status: "VERIFIED",
             pipeline_version: "v4.0-Gemini-2.0-Flash",
+
+            // Identity
+            place_identity_lock: { name: placeName, address: place.formatted_address || "Unknown" },
+            store_name_from_image: placeName,
             place_name: placeName,
-            rating: place.rating || 0,
-            total_reviews: place.user_ratings_total || 0,
+            rating: avgRating,
+            total_reviews: reviewCount,
             address: place.formatted_address || "",
-            total_images_analyzed: imagesWithDetections,
+
+            // Match old review_analysis block
+            review_analysis: {
+                average_rating: avgRating,
+                total_reviews: reviewCount,
+                sentiment: sentiment,
+                recent_reviews: recentReviews,
+            },
+
+            // Match old vision_analysis block
+            vision_analysis: {
+                total_images_analyzed: imagesWithDetections,
+                total_products_detected: aggregated.total_products_detected,
+                unique_brands: aggregated.unique_brands_list,
+                brand_distribution: aggregated.brand_distribution,
+                category_presence: aggregated.category_presence,
+                missing_categories: aggregated.missing_categories,
+                shelf_quality_score: aggregated.shelf_quality_score,
+                store_footprint_index: aggregated.store_footprint_index
+            },
+
+            // Authenticity Score matching
+            authenticity_score: authenticityScore,
+            authenticity_breakdown: {
+                review_sentiment: Math.round((sentiment.positive_pct / 100) * 25),
+                rating_score: Math.round((Math.min(avgRating, 5) / 5) * 20),
+                image_presence: imagesWithDetections >= 4 ? 15 : imagesWithDetections >= 2 ? 10 : 5,
+                brand_consistency: aggregated.unique_brands_list.length >= 8 ? 25 : aggregated.unique_brands_list.length >= 4 ? 18 : aggregated.unique_brands_list.length >= 2 ? 10 : 5,
+                shelf_quality: Math.round((aggregated.shelf_quality_score / 100) * 15),
+            },
+
+            // AI Insights
+            ai_insights: aggregated.ai_insights,
+
+            // Raw fields for backward compatibility
             total_products_detected: aggregated.total_products_detected,
             unique_brands_detected: aggregated.unique_brands_list.length,
-            store_footprint_index: aggregated.store_footprint_index,
-            brands: aggregated.unique_brands_list,
+            brands: aggregated.unique_brands_list.map(b => ({ brand_name: b })),
+
             raw_detections: allDetections.map(d => ({
                 label: d.label,
                 category: d.category_guess,
