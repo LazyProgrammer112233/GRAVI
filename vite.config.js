@@ -10,6 +10,11 @@ export default defineConfig({
         target: 'https://iwdxokuakjshsagazjvu.supabase.co',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api\/supabase/, '')
+      },
+      '/api/replicate': {
+        target: 'https://api.replicate.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/replicate/, '')
       }
     }
   }

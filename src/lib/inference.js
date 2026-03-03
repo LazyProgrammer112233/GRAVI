@@ -1,4 +1,4 @@
-export const REPLICATE_API_URL = "https://api.replicate.com/v1/models/lucataco/internvl2-8b/predictions";
+export const REPLICATE_API_URL = "/api/replicate/v1/models/lucataco/internvl2-8b/predictions";
 
 export const V3_PROMPT = `You are a retail audit engine.
 Analyze the image and identify ONLY clearly visible FMCG products.
@@ -57,7 +57,11 @@ export async function fetchInternVL2Analysis(base64Image, replicateToken) {
     // Poll if prediction is not finished immediately
     while (prediction.status !== "succeeded" && prediction.status !== "failed") {
         await new Promise(r => setTimeout(r, 2000));
-        const pollResponse = await fetch(prediction.urls.get, {
+
+        // Proxy the polling URL as well to avoid CORS
+        const pollUrl = prediction.urls.get.replace('https://api.replicate.com', '/api/replicate');
+
+        const pollResponse = await fetch(pollUrl, {
             headers: {
                 "Authorization": `Bearer ${replicateToken}`,
                 "Content-Type": "application/json"
