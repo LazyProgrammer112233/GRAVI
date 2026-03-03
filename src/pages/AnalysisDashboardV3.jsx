@@ -75,7 +75,7 @@ const AnalysisDashboardV3 = () => {
             setErrorMsg('');
 
             // Step 1: VLM Inference
-            setStep('Running OpenGVLab InternVL2-8B Vision Analysis...');
+            setStep('Running LLaVA-13B Vision Analysis...');
             const vlmResult = await fetchInternVL2Analysis(selectedImage, replicateKey);
 
             if (!vlmResult.products || vlmResult.products.length === 0) {

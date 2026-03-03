@@ -1,4 +1,4 @@
-export const REPLICATE_API_URL = "/api/replicate/v1/models/lucataco/internvl2-8b/predictions";
+export const REPLICATE_API_URL = "/api/replicate/v1/models/yorickvp/llava-13b/predictions";
 
 export const V3_PROMPT = `You are a retail audit engine.
 Analyze the image and identify ONLY clearly visible FMCG products.
