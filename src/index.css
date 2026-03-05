@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 :root {
   --primary-50: #0f172a;
   --primary-100: #1e3a8a;
