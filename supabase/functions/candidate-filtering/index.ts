@@ -21,19 +21,30 @@ serve(async (req) => {
         const { ocr_text, packaging_type, dominant_colors, barcode } = await req.json()
 
         if (!ocr_text && !barcode) {
-            return new Response(JSON.stringify({ error: "Require ocr_text or barcode to filter candidates." }), {
+            // If neither OCR nor barcode, use a broad match to return top SKUs
+            const { data: allData } = await supabaseClient.from('fmcg_skus').select('*').limit(5)
+            return new Response(JSON.stringify(allData || []), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-                status: 400,
             })
         }
 
-        // Convert OCR to something we can ILIKE against. We'll split words to build a fuzzy-ish query
-        // e.g "Aashirvaad Atta" -> %aashirvaad%, %atta%
-        const searchTerms = ocr_text ? ocr_text.split(' ').filter((w: string) => w.length > 3).map((w: string) => `%${w}%`) : []
+        // Sanitize OCR text: remove special SQL characters, split on spaces AND commas
+        // Groq Vision often returns "Brand1, Brand2, Product Name" so we split on both
+        const rawTerms = ocr_text
+            ? ocr_text
+                .replace(/[()"'%_\\]/g, '')  // Remove SQL special chars
+                .split(/[,\s]+/)             // Split on commas and spaces
+                .map((w: string) => w.trim())
+                .filter((w: string) => w.length > 3)  // Min 4 chars to avoid noise
+            : []
 
-        // Fallback if OCR is just a single word or empty
-        if (searchTerms.length === 0 && ocr_text) {
-            searchTerms.push(`%${ocr_text}%`)
+        // De-duplicate terms
+        const searchTerms = [...new Set(rawTerms)].map((w: string) => `%${w}%`)
+
+        // Fallback if OCR is just a single word or empty after sanitization
+        if (searchTerms.length === 0 && ocr_text && ocr_text.trim().length > 3) {
+            const cleaned = ocr_text.replace(/[()"'%_\\,]/g, '').trim()
+            if (cleaned) searchTerms.push(`%${cleaned}%`)
         }
 
         // Step 1: Base Query builder
