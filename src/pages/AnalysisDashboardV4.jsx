@@ -58,8 +58,38 @@ const AnalysisDashboardV4 = () => {
             };
 
             const candidates = await callEdge('candidate-filtering', visionMetadata);
+            // If no candidates found (e.g. exterior-only photos with no OCR text),
+            // skip llama-scout and build an empty detections result.
             if (!Array.isArray(candidates) || candidates.length === 0) {
-                throw new Error("No FMCG candidates found in the database for this store's products.");
+                const assembledData = {
+                    id,
+                    store_name: storeExtraction.store_name,
+                    maps_url: mapsUrl,
+                    place_id: storeExtraction.place_id,
+                    analysis_data: {
+                        place_identity_lock: {
+                            name: storeExtraction.store_name,
+                            address: storeExtraction.address,
+                            place_id: storeExtraction.place_id,
+                        },
+                        ratings_data: {
+                            average_rating: storeExtraction.rating,
+                            total_reviews: storeExtraction.total_reviews,
+                        },
+                        photos_analyzed: storeExtraction.photos_analyzed,
+                        raw_images: storeExtraction.image_urls || [],
+                        reviews: storeExtraction.reviews || [],
+                        ocr_text: storeExtraction.ocr_text,
+                        vision_analysis: { raw_detections: [] },
+                    }
+                };
+                setStoreData(assembledData);
+                try {
+                    await supabase.from('store_analyses').upsert([assembledData], { onConflict: 'id' });
+                } catch (e) {
+                    console.warn("Could not persist to store_analyses table:", e.message);
+                }
+                return;
             }
 
             // ─────────────────────────────────────────────────────
@@ -68,16 +98,38 @@ const AnalysisDashboardV4 = () => {
             // reasoning to prevent hallucination.
             // ─────────────────────────────────────────────────────
             setPhase('Running LLaMA Brand Verification...');
-            const llmResult = await callEdge('llama-scout', {
-                candidates,
-                vision_metadata: visionMetadata
-            });
+            let llmResults = [];
+            try {
+                const rawLlm = await callEdge('llama-scout', {
+                    candidates,
+                    vision_metadata: visionMetadata
+                });
+                // llama-scout now returns an array of matches
+                if (Array.isArray(rawLlm)) {
+                    llmResults = rawLlm.filter(r => r.brand && r.brand.toLowerCase() !== 'unknown');
+                }
+            } catch (e) {
+                console.warn('llama-scout failed:', e.message);
+                // Non-fatal: we'll show an empty detections table
+            }
 
             // ─────────────────────────────────────────────────────
             // PHASE 4: Assemble final payload
             // All fields here are strictly sourced from real APIs —
             // zero dummy data, zero hallucinations.
             // ─────────────────────────────────────────────────────
+
+            // Map every llama-scout detection into a raw_detection row
+            const rawDetections = llmResults.map(match => ({
+                product_name: match.sku || 'Unknown Product',
+                brand: match.brand || 'Unknown',
+                category: candidates.find(c => c.brand === match.brand)?.category || 'Mixed',
+                confidence: match.confidence ?? 0,
+                validation_status: match.confidence >= 70 ? 'Verified' : 'Medium confidence',
+                dictionary_match_score: match.confidence ?? 0,
+                reasoning: match.reasoning || '',
+            }));
+
             const assembledData = {
                 id,
                 store_name: storeExtraction.store_name,
@@ -97,19 +149,7 @@ const AnalysisDashboardV4 = () => {
                     raw_images: storeExtraction.image_urls || [],
                     reviews: storeExtraction.reviews || [],
                     ocr_text: storeExtraction.ocr_text,
-                    vision_analysis: {
-                        raw_detections: [
-                            {
-                                product_name: llmResult?.sku || candidates[0]?.sku || 'Unknown',
-                                brand: llmResult?.brand || candidates[0]?.brand || 'Unknown',
-                                category: candidates[0]?.category || 'Mixed',
-                                confidence: llmResult?.confidence || 85,
-                                validation_status: (llmResult?.brand && llmResult?.brand !== 'unknown') ? 'Verified' : 'Unknown',
-                                dictionary_match_score: llmResult?.confidence || 85,
-                                reasoning: llmResult?.reasoning || '',
-                            }
-                        ]
-                    },
+                    vision_analysis: { raw_detections: rawDetections },
                 }
             };
 

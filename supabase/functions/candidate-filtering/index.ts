@@ -21,9 +21,10 @@ serve(async (req) => {
         const { ocr_text, packaging_type, dominant_colors, barcode } = await req.json()
 
         if (!ocr_text && !barcode) {
-            // If neither OCR nor barcode, use a broad match to return top SKUs
-            const { data: allData } = await supabaseClient.from('fmcg_skus').select('*').limit(5)
-            return new Response(JSON.stringify(allData || []), {
+            // No evidence from OCR or barcode — return empty so llama-scout
+            // doesn't match ghost candidates and hallucinates brands.
+            console.log("[candidate-filtering] No OCR text or barcode — returning empty candidates.")
+            return new Response(JSON.stringify([]), {
                 headers: { ...corsHeaders, 'Content-Type': 'application/json' },
             })
         }
